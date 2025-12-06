@@ -1,6 +1,6 @@
 """
-MCP Service - Excel Operations via openpyxl
-Handles all Excel file manipulation
+MCP Service - Excel Operations via openpyxl - COMPLETE VERSION
+Handles all Excel file manipulation - Basic + Advanced Tools
 """
 
 import openpyxl
@@ -12,7 +12,6 @@ import uuid
 import time
 from typing import Dict, Any, List, Optional, Tuple
 from loguru import logger
-from openpyxl.utils import get_column_letter, column_index_from_string
 
 from app.core.config import settings
 
@@ -22,6 +21,15 @@ class MCPService:
     def __init__(self):
         self.data_dir = settings.EXCEL_DIR
         self.data_dir.mkdir(parents=True, exist_ok=True)
+
+    def _find_header_row(self, ws) -> int:
+        """Find the row containing headers (skip empty rows)"""
+        for row_idx in range(1, min(6, ws.max_row + 1)):
+            row_values = [ws.cell(row=row_idx, column=c).value for c in range(1, ws.max_column + 1)]
+            if any(row_values):
+                return row_idx
+        return 1  # Default to row 1
+
     
     async def execute_tool(self, tool_name: str, parameters: Dict[str, Any]) -> Dict:
         """Execute an MCP tool"""
@@ -45,6 +53,23 @@ class MCPService:
                 result = await self.get_file_metadata(**parameters)
             elif tool_name == "update_by_search":
                 result = await self.update_by_search(**parameters)
+            elif tool_name == "smart_update":
+                result = await self.smart_update(**parameters)
+            # NEW ADVANCED TOOLS
+            elif tool_name == "read_data":
+                result = await self.read_data(**parameters)
+            elif tool_name == "add_row":
+                result = await self.add_row(**parameters)
+            elif tool_name == "delete_row":
+                result = await self.delete_row(**parameters)
+            elif tool_name == "bulk_update":
+                result = await self.bulk_update(**parameters)
+            elif tool_name == "filter_data":
+                result = await self.filter_data(**parameters)
+            elif tool_name == "calculate_aggregate":
+                result = await self.calculate_aggregate(**parameters)
+            elif tool_name == "sort_data":
+                result = await self.sort_data(**parameters)
             else:
                 raise ValueError(f"Unknown tool: {tool_name}")
             
@@ -79,17 +104,12 @@ class MCPService:
         file_id = str(uuid.uuid4())
         filepath = self.data_dir / f"{file_id}_{filename}"
         
-        # Create workbook
         wb = Workbook()
-        
-        # Remove default sheet
         wb.remove(wb.active)
         
-        # Add requested sheets
         for sheet_name in sheets:
             wb.create_sheet(title=sheet_name)
         
-        # Save
         wb.save(filepath)
         
         logger.info(f"Created workbook: {filename} with {len(sheets)} sheet(s)")
@@ -111,17 +131,14 @@ class MCPService:
     ) -> Dict:
         """Tool 2: Import CSV to Excel"""
         
-        # Read CSV
         df = pd.read_csv(csv_file)
         
         if df.empty:
             raise ValueError("CSV file is empty")
         
-        # Convert to list of lists
         data = [df.columns.tolist()] + df.values.tolist()
         
         if file_id:
-            # Add to existing workbook
             filepath = self._get_filepath(file_id)
             wb = openpyxl.load_workbook(filepath)
             
@@ -131,7 +148,6 @@ class MCPService:
             ws = wb[target_sheet]
             
         else:
-            # Create new workbook
             create_result = await self.create_workbook(
                 filename=Path(csv_file).stem + ".xlsx",
                 sheets=[target_sheet]
@@ -142,7 +158,6 @@ class MCPService:
             wb = openpyxl.load_workbook(filepath)
             ws = wb[target_sheet]
         
-        # Write data
         start_row, start_col = self._parse_cell_address(start_cell)
         
         for row_idx, row_data in enumerate(data):
@@ -159,7 +174,7 @@ class MCPService:
         
         return {
             "file_id": file_id,
-            "rows_imported": len(data) - 1,  # Exclude header
+            "rows_imported": len(data) - 1,
             "columns_imported": len(df.columns),
             "target_sheet": target_sheet,
             "message": f"Imported {len(data) - 1} rows into '{target_sheet}'"
@@ -256,24 +271,21 @@ class MCPService:
             raise ValueError(f"Sheet '{sheet_name}' not found")
         
         ws = wb[sheet_name]
-        cell = ws[cell_address]
         
-        # Ensure formula starts with =
         if not formula.startswith('='):
-            formula = f"={formula}"
+            formula = '=' + formula
         
-        cell.value = formula
-        
+        ws[cell_address] = formula
         wb.save(filepath)
         
-        logger.info(f"Applied formula to {cell_address} in {sheet_name}")
+        logger.info(f"Applied formula to {cell_address}: {formula}")
         
         return {
             "file_id": file_id,
             "sheet_name": sheet_name,
             "cell_address": cell_address,
             "formula": formula,
-            "message": f"Applied formula to {cell_address} in '{sheet_name}'"
+            "message": f"Applied formula to {cell_address}"
         }
     
     async def read_range(
@@ -292,17 +304,14 @@ class MCPService:
         
         ws = wb[sheet_name]
         
-        # Parse range
         if ':' in range_notation:
             start_cell, end_cell = range_notation.split(':')
             start_row, start_col = self._parse_cell_address(start_cell)
             end_row, end_col = self._parse_cell_address(end_cell)
         else:
-            # Single cell
             start_row, start_col = self._parse_cell_address(range_notation)
             end_row, end_col = start_row, start_col
         
-        # Read data
         data = []
         for row_idx in range(start_row, end_row + 1):
             row_data = []
@@ -348,6 +357,570 @@ class MCPService:
             "sheets": sheets
         }
     
+    async def update_by_search(
+        self,
+        file_id: str,
+        sheet_name: str,
+        search_column: str,
+        search_value: str,
+        update_column: str,
+        new_value: Any
+    ) -> Dict:
+        """Tool 8: Search and update"""
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        
+        search_col_num = column_index_from_string(search_column)
+        update_col_num = column_index_from_string(update_column)
+        
+        found_row = None
+        for row in range(1, ws.max_row + 1):
+            cell_value = ws.cell(row=row, column=search_col_num).value
+            if cell_value and str(cell_value).strip() == str(search_value).strip():
+                found_row = row
+                break
+        
+        if not found_row:
+            raise ValueError(f"Could not find '{search_value}' in column {search_column}")
+        
+        old_value = ws.cell(row=found_row, column=update_col_num).value
+        ws.cell(row=found_row, column=update_col_num).value = new_value
+        
+        wb.save(filepath)
+        
+        cell_address = f"{update_column}{found_row}"
+        logger.info(f"Updated {search_value} at {cell_address}")
+        
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "search_value": search_value,
+            "found_row": found_row,
+            "cell_address": cell_address,
+            "old_value": old_value,
+            "new_value": new_value,
+            "message": f"Updated {search_value} from {old_value} to {new_value}"
+        }
+    
+    async def smart_update(
+        self,
+        file_id: str,
+        sheet_name: str,
+        person_name: str,
+        field_name: str,
+        new_value: Any
+    ) -> Dict:
+        """Tool 9: Smart update with auto column detection"""
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        
+        # Find header row dynamically
+        header_row = self._find_header_row(ws)
+        
+        headers = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header = ws.cell(row=header_row, column=col_idx).value
+            if header:
+                headers[col_idx] = str(header).strip()
+        
+        name_col = None
+        name_keywords = ['name', 'employee', 'person', 'full name']
+        for col_idx, header in headers.items():
+            if any(kw in header.lower() for kw in name_keywords):
+                name_col = col_idx
+                break
+        
+        if not name_col:
+            raise ValueError(f"No name column found. Headers: {list(headers.values())}")
+        
+        field_col = None
+        field_keywords = {
+            'salary': ['salary', 'pay', 'compensation', 'wage'],
+            'position': ['position', 'role', 'title', 'job'],
+            'department': ['department', 'dept', 'division']
+        }
+        
+        search_keywords = field_keywords.get(field_name.lower(), [field_name.lower()])
+        
+        for col_idx, header in headers.items():
+            if any(kw in header.lower() for kw in search_keywords):
+                field_col = col_idx
+                break
+        
+        if not field_col:
+            raise ValueError(f"Column '{field_name}' not found. Headers: {list(headers.values())}")
+        
+        found_row = None
+        for row_idx in range(2, ws.max_row + 1):
+            cell_value = ws.cell(row=row_idx, column=name_col).value
+            if cell_value and str(cell_value).strip().lower() == person_name.strip().lower():
+                found_row = row_idx
+                break
+        
+        if not found_row:
+            raise ValueError(f"Person '{person_name}' not found")
+        
+        old_value = ws.cell(row=found_row, column=field_col).value
+        ws.cell(row=found_row, column=field_col).value = new_value
+        wb.save(filepath)
+        
+        cell_address = f"{get_column_letter(field_col)}{found_row}"
+        
+        return {
+            "file_id": file_id,
+            "person_name": person_name,
+            "field_name": field_name,
+            "cell_address": cell_address,
+            "old_value": old_value,
+            "new_value": new_value,
+            "message": f"Updated {person_name}'s {field_name} from {old_value} to {new_value}"
+        }
+    
+    # ==================== ADVANCED TOOLS ====================
+    
+    async def read_data(
+        self,
+        file_id: str,
+        sheet_name: str,
+        max_rows: int = 1000
+    ) -> Dict:
+        """Tool 10: Read all data from sheet"""
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        
+        data = []
+        for row_idx in range(1, min(ws.max_row + 1, max_rows + 1)):
+            row_data = []
+            for col_idx in range(1, ws.max_column + 1):
+                cell_value = ws.cell(row=row_idx, column=col_idx).value
+                row_data.append(cell_value)
+            data.append(row_data)
+        
+        logger.info(f"Read {len(data)} rows from {sheet_name}")
+        
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "rows": len(data),
+            "columns": len(data[0]) if data else 0,
+            "data": data,
+            "message": f"Read {len(data)} rows"
+        }
+    
+    async def add_row(
+        self,
+        file_id: str,
+        sheet_name: str,
+        data: List[Any]
+    ) -> Dict:
+        """Tool 11: Add new row"""
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        
+        new_row = ws.max_row + 1
+        for col_idx, value in enumerate(data, start=1):
+            ws.cell(row=new_row, column=col_idx, value=value)
+        
+        wb.save(filepath)
+        
+        logger.info(f"Added row {new_row} to {sheet_name}")
+        
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "row_number": new_row,
+            "data": data,
+            "message": f"Added new row {new_row}"
+        }
+    
+    async def delete_row(
+        self,
+        file_id: str,
+        sheet_name: str,
+        person_name: str
+    ) -> Dict:
+        """Tool 12: Delete row by person name"""
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        
+        headers = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header = ws.cell(row=1, column=col_idx).value
+            if header:
+                headers[col_idx] = str(header).strip()
+        
+        name_col = None
+        for col_idx, header in headers.items():
+            if any(kw in header.lower() for kw in ['name', 'employee', 'person']):
+                name_col = col_idx
+                break
+        
+        if not name_col:
+            raise ValueError("No name column found")
+        
+        found_row = None
+        for row_idx in range(2, ws.max_row + 1):
+            cell_value = ws.cell(row=row_idx, column=name_col).value
+            if cell_value and str(cell_value).strip().lower() == person_name.strip().lower():
+                found_row = row_idx
+                break
+        
+        if not found_row:
+            raise ValueError(f"Person '{person_name}' not found")
+        
+        ws.delete_rows(found_row, 1)
+        wb.save(filepath)
+        
+        logger.info(f"Deleted row {found_row}")
+        
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "person_name": person_name,
+            "deleted_row": found_row,
+            "message": f"Deleted {person_name} from row {found_row}"
+        }
+    
+    async def bulk_update(
+        self,
+        file_id: str,
+        sheet_name: str,
+        filter_column: str,
+        filter_value: Any,
+        update_column: str,
+        operation: str,
+        value: Any
+    ) -> Dict:
+        """Tool 13: Bulk update multiple rows"""
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        
+        # Find header row dynamically
+        header_row = self._find_header_row(ws)
+        
+        headers = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header = ws.cell(row=header_row, column=col_idx).value
+            if header:
+                headers[str(header).strip().lower()] = col_idx
+        
+        filter_col = headers.get(filter_column.lower())
+        update_col = headers.get(update_column.lower())
+        
+        if not filter_col:
+            raise ValueError(f"Column '{filter_column}' not found")
+        if not update_col:
+            raise ValueError(f"Column '{update_column}' not found")
+        
+        updated_rows = []
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            cell_value = ws.cell(row=row_idx, column=filter_col).value
+            
+            if str(cell_value).strip().lower() == str(filter_value).strip().lower():
+                old_value = ws.cell(row=row_idx, column=update_col).value
+                
+                if operation == "multiply":
+                    new_value = float(old_value) * float(value)
+                elif operation == "add":
+                    new_value = float(old_value) + float(value)
+                elif operation == "set":
+                    new_value = value
+                else:
+                    new_value = value
+                
+                ws.cell(row=row_idx, column=update_col, value=new_value)
+                updated_rows.append({
+                    "row": row_idx,
+                    "old_value": old_value,
+                    "new_value": new_value
+                })
+        
+        wb.save(filepath)
+        
+        logger.info(f"Bulk updated {len(updated_rows)} rows")
+        
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "updated_count": len(updated_rows),
+            "updated_rows": updated_rows,
+            "message": f"Updated {len(updated_rows)} rows"
+        }
+    
+    async def filter_data(
+        self,
+        file_id: str,
+        sheet_name: str,
+        column: str,
+        operator: str,
+        value: Any
+    ) -> Dict:
+        """Tool 14: Filter data by condition"""
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        
+        # Find header row dynamically
+        header_row = self._find_header_row(ws)
+        
+        headers = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header = ws.cell(row=header_row, column=col_idx).value
+            if header:
+                headers[str(header).strip().lower()] = col_idx
+        
+        filter_col = headers.get(column.lower())
+        if not filter_col:
+            raise ValueError(f"Column '{column}' not found")
+        
+        matching_rows = []
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            cell_value = ws.cell(row=row_idx, column=filter_col).value
+            
+            match = False
+            try:
+                if operator == "<":
+                    match = float(cell_value) < float(value)
+                elif operator == ">":
+                    match = float(cell_value) > float(value)
+                elif operator == "=":
+                    match = str(cell_value).strip() == str(value).strip()
+                elif operator == "contains":
+                    match = str(value).lower() in str(cell_value).lower()
+            except:
+                pass
+            
+            if match:
+                row_data = []
+                for col_idx in range(1, ws.max_column + 1):
+                    row_data.append(ws.cell(row=row_idx, column=col_idx).value)
+                matching_rows.append(row_data)
+        
+        logger.info(f"Found {len(matching_rows)} matching rows")
+        
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "filter": f"{column} {operator} {value}",
+            "count": len(matching_rows),
+            "data": matching_rows,
+            "message": f"Found {len(matching_rows)} rows"
+        }
+    
+    async def calculate_aggregate(
+        self,
+        file_id: str,
+        sheet_name: str,
+        column: str,
+        operation: str,
+        group_by: Optional[str] = None
+    ) -> Dict:
+        """Tool 15: Calculate aggregates"""
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        
+        # Find header row dynamically
+        header_row = self._find_header_row(ws)
+        
+        headers = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header = ws.cell(row=header_row, column=col_idx).value
+            if header:
+                headers[str(header).strip().lower()] = col_idx
+        
+        calc_col = headers.get(column.lower())
+        if not calc_col:
+            raise ValueError(f"Column '{column}' not found")
+        
+        if group_by:
+            group_col = headers.get(group_by.lower())
+            if not group_col:
+                raise ValueError(f"Column '{group_by}' not found")
+            
+            groups = {}
+            for row_idx in range(header_row + 1, ws.max_row + 1):
+                group_value = ws.cell(row=row_idx, column=group_col).value
+                calc_value = ws.cell(row=row_idx, column=calc_col).value
+                
+                if group_value not in groups:
+                    groups[group_value] = []
+                try:
+                    groups[group_value].append(float(calc_value))
+                except:
+                    pass
+            
+            results = {}
+            for group, values in groups.items():
+                if not values:
+                    continue
+                if operation == "sum":
+                    results[group] = sum(values)
+                elif operation == "average":
+                    results[group] = sum(values) / len(values)
+                elif operation == "count":
+                    results[group] = len(values)
+                elif operation == "min":
+                    results[group] = min(values)
+                elif operation == "max":
+                    results[group] = max(values)
+            
+            return {
+                "file_id": file_id,
+                "sheet_name": sheet_name,
+                "operation": operation,
+                "column": column,
+                "group_by": group_by,
+                "results": results,
+                "message": f"Calculated {operation} by {group_by}"
+            }
+        else:
+            values = []
+            for row_idx in range(header_row + 1, ws.max_row + 1):
+                cell_value = ws.cell(row=row_idx, column=calc_col).value
+                if cell_value is not None:
+                    try:
+                        values.append(float(cell_value))
+                    except:
+                        pass
+            
+            if not values:
+                result = 0
+            elif operation == "sum":
+                result = sum(values)
+            elif operation == "average":
+                result = sum(values) / len(values)
+            elif operation == "count":
+                result = len(values)
+            elif operation == "min":
+                result = min(values)
+            elif operation == "max":
+                result = max(values)
+            else:
+                result = 0
+            
+            return {
+                "file_id": file_id,
+                "sheet_name": sheet_name,
+                "operation": operation,
+                "column": column,
+                "result": result,
+                "message": f"{operation.capitalize()}: {result}"
+            }
+    
+    async def sort_data(
+        self,
+        file_id: str,
+        sheet_name: str,
+        sort_by: str,
+        ascending: bool = True
+    ) -> Dict:
+        """Tool 16: Sort data"""
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        
+        # Find header row dynamically
+        header_row = self._find_header_row(ws)
+        
+        headers = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header = ws.cell(row=header_row, column=col_idx).value
+            if header:
+                headers[str(header).strip().lower()] = col_idx
+        
+        sort_col = headers.get(sort_by.lower())
+        if not sort_col:
+            raise ValueError(f"Column '{sort_by}' not found")
+        
+        rows_data = []
+        for row_idx in range(2, ws.max_row + 1):
+            row = []
+            for col_idx in range(1, ws.max_column + 1):
+                row.append(ws.cell(row=row_idx, column=col_idx).value)
+            rows_data.append(row)
+        
+        try:
+            rows_data.sort(
+                key=lambda x: float(x[sort_col-1]) if x[sort_col-1] is not None else 0,
+                reverse=not ascending
+            )
+        except:
+            rows_data.sort(
+                key=lambda x: str(x[sort_col-1]) if x[sort_col-1] is not None else "",
+                reverse=not ascending
+            )
+        
+        for row_idx, row_data in enumerate(rows_data, start=2):
+            for col_idx, value in enumerate(row_data, start=1):
+                ws.cell(row=row_idx, column=col_idx, value=value)
+        
+        wb.save(filepath)
+        
+        logger.info(f"Sorted {len(rows_data)} rows")
+        
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "sorted_by": sort_by,
+            "ascending": ascending,
+            "rows_sorted": len(rows_data),
+            "message": f"Sorted by {sort_by}"
+        }
+    
+    # ==================== HELPER METHODS ====================
+    
     async def list_files(self) -> List[Dict]:
         """List all Excel files"""
         
@@ -380,138 +953,26 @@ class MCPService:
         return matches[0]
     
     def _parse_cell_address(self, address: str) -> Tuple[int, int]:
-     """Parse cell address (e.g., 'A1' -> (1, 1))"""
-    
-    # Remove any whitespace
-     address = address.strip().upper()
-    
-    # Extract column letters and row number
-     col_str = ''
-     row_str = ''
-     
-     for char in address:
-         if char.isalpha():
-            col_str += char
-         elif char.isdigit():
-            row_str += char
-    
-     if not col_str or not row_str:
-         raise ValueError(f"Invalid cell address: {address}")
-    
-    # Convert column letters to number using imported function
-     col = column_index_from_string(col_str)
-     row = int(row_str)
-    
-     return row, col
-    
-    # Add this to your mcp_service.py
-
-# async def update_by_search(
-#     self,
-#     file_id: str,
-#     sheet_name: str,
-#     search_column: str,  # Column to search (e.g., "A" for Name)
-#     search_value: str,   # What to find (e.g., "John Smith")
-#     update_column: str,  # Column to update (e.g., "C" for Salary)
-#     new_value: Any       # New value
-# ) -> Dict:
-#     """Tool 8: Search and update - finds a row and updates a cell"""
-    
-#     filepath = self._get_filepath(file_id)
-#     wb = openpyxl.load_workbook(filepath)
-    
-#     if sheet_name not in wb.sheetnames:
-#         raise ValueError(f"Sheet '{sheet_name}' not found")
-    
-#     ws = wb[sheet_name]
-    
-#     # Convert column letters to numbers
-#     search_col_num = column_index_from_string(search_column)
-#     update_col_num = column_index_from_string(update_column)
-    
-#     # Search for the value
-#     found_row = None
-#     for row in range(1, ws.max_row + 1):
-#         cell_value = ws.cell(row=row, column=search_col_num).value
-#         if cell_value == search_value:
-#             found_row = row
-#             break
-    
-#     if not found_row:
-#         raise ValueError(f"Could not find '{search_value}' in column {search_column}")
-    
-#     # Update the cell
-#     old_value = ws.cell(row=found_row, column=update_col_num).value
-#     ws.cell(row=found_row, column=update_col_num).value = new_value
-    
-#     wb.save(filepath)
-    
-#     logger.info(f"Updated {search_value}'s value from {old_value} to {new_value}")
-    
-#     return {
-#         "file_id": file_id,
-#         "sheet_name": sheet_name,
-#         "search_value": search_value,
-#         "found_row": found_row,
-#         "old_value": old_value,
-#         "new_value": new_value,
-#         "message": f"Updated {search_value} in row {found_row}"
-#     }
-
-    async def update_by_search(
-        self,
-        file_id: str,
-        sheet_name: str,
-        search_column: str,
-        search_value: str,
-        update_column: str,
-        new_value: Any
-    ) -> Dict:
-        """Tool 8: Search and update - finds a row and updates a cell"""
+        """Parse cell address (e.g., 'A1' -> (1, 1))"""
         
-        filepath = self._get_filepath(file_id)
-        wb = openpyxl.load_workbook(filepath)
+        address = address.strip().upper()
         
-        if sheet_name not in wb.sheetnames:
-            raise ValueError(f"Sheet '{sheet_name}' not found")
+        col_str = ''
+        row_str = ''
         
-        ws = wb[sheet_name]
+        for char in address:
+            if char.isalpha():
+                col_str += char
+            elif char.isdigit():
+                row_str += char
         
-        # Convert column letters to numbers
-        from openpyxl.utils import column_index_from_string
-        search_col_num = column_index_from_string(search_column)
-        update_col_num = column_index_from_string(update_column)
+        if not col_str or not row_str:
+            raise ValueError(f"Invalid cell address: {address}")
         
-        # Search for the value
-        found_row = None
-        for row in range(1, ws.max_row + 1):
-            cell_value = ws.cell(row=row, column=search_col_num).value
-            if cell_value and str(cell_value).strip() == str(search_value).strip():
-                found_row = row
-                break
+        col = column_index_from_string(col_str)
+        row = int(row_str)
         
-        if not found_row:
-            raise ValueError(f"Could not find '{search_value}' in column {search_column}")
-        
-        # Update the cell
-        old_value = ws.cell(row=found_row, column=update_col_num).value
-        ws.cell(row=found_row, column=update_col_num).value = new_value
-        
-        wb.save(filepath)
-        
-        cell_address = f"{update_column}{found_row}"
-        logger.info(f"Updated {search_value}'s value at {cell_address} from {old_value} to {new_value}")
-        
-        return {
-            "file_id": file_id,
-            "sheet_name": sheet_name,
-            "search_value": search_value,
-            "found_row": found_row,
-            "cell_address": cell_address,
-            "old_value": old_value,
-            "new_value": new_value,
-            "message": f"Successfully updated {search_value} in row {found_row}, cell {cell_address} from {old_value} to {new_value}"
-        }
+        return row, col
 
 # Create service instance
 mcp_service = MCPService()

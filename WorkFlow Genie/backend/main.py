@@ -12,7 +12,9 @@ from loguru import logger
 from app.core.config import settings
 from app.core.database import engine, Base
 from app.core import models  # Import models to register them
-from app.api.routes import chat, sessions, excel
+
+# Import all routers (REMOVED tasks, ADDED history)
+from app.api.routes import auth, users, files, chat, sessions, excel, history
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -42,7 +44,7 @@ manager = ConnectionManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger.info("🧞 Starting WorkflowGenie Backend...")
+    logger.info("🚀 Starting WorkflowGenie Backend...")
     
     # Create database tables
     Base.metadata.create_all(bind=engine)
@@ -70,10 +72,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
+# ============================================================================
+# INCLUDE ROUTERS
+# ============================================================================
+
+# Authentication & User Management
+app.include_router(auth.router)          # /api/auth/register, /api/auth/login
+app.include_router(users.router)         # /api/users/sessions, /api/users/sessions/{id}/messages
+
+# File Management
+app.include_router(files.router)         # /api/files/upload, /api/files/download/{id}
+
+# Session Management
+app.include_router(sessions.router)      # /api/sessions/create, /api/sessions/{id}
+
+# History (Chat UI)
+app.include_router(history.router)       # /api/history/sessions
+
+# Chat (Main execution)
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
-app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
+
+# Excel (Direct operations)
 app.include_router(excel.router, prefix="/api/excel", tags=["excel"])
+
+# ============================================================================
+# BASIC ENDPOINTS
+# ============================================================================
 
 @app.get("/")
 async def root():
@@ -81,7 +105,17 @@ async def root():
     return {
         "message": "WorkflowGenie API",
         "version": "1.0.0",
-        "status": "running"
+        "status": "running",
+        "endpoints": {
+            "auth": "/api/auth",
+            "users": "/api/users",
+            "files": "/api/files",
+            "sessions": "/api/sessions",
+            "history": "/api/history",
+            "chat": "/api/chat",
+            "excel": "/api/excel",
+            "docs": "/docs"
+        }
     }
 
 @app.get("/health")

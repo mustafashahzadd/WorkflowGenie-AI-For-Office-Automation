@@ -1,24 +1,25 @@
 """
-Database models for WorkflowGenie
-Extended with User authentication and Task tracking
+Create all database tables for WorkflowGenie
+Run this after any model changes
 """
 
-from sqlalchemy import Column, String, DateTime, Boolean, Integer, ForeignKey, Text, JSON
+from sqlalchemy import create_engine, Column, String, DateTime, Boolean, Integer, ForeignKey, Text, JSON
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
 
-from app.core.database import Base
+Base = declarative_base()
+engine = create_engine('sqlite:///workflowgenie.db')
 
 def generate_uuid():
     return str(uuid.uuid4())
 
 # ============================================================================
-# USER MODEL (NEW)
+# USER MODEL
 # ============================================================================
 
 class User(Base):
-    """User authentication model"""
     __tablename__ = "users"
     
     id = Column(String, primary_key=True, default=generate_uuid)
@@ -28,40 +29,34 @@ class User(Base):
     last_login = Column(DateTime, nullable=True)
     is_active = Column(Boolean, default=True)
     
-    # Relationships
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")
 
-
 # ============================================================================
-# SESSION MODEL (UPDATED - linked to User)
+# SESSION MODEL
 # ============================================================================
 
 class Session(Base):
-    """Chat session model"""
     __tablename__ = "sessions"
     
     id = Column(String, primary_key=True, default=generate_uuid)
-    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)  # Now required
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = Column(Boolean, default=True)
     summary = Column(Text, nullable=True)
     
-    # Relationships
     user = relationship("User", back_populates="sessions")
     messages = relationship("Message", back_populates="session", cascade="all, delete-orphan")
     operations = relationship("Operation", back_populates="session", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="session", cascade="all, delete-orphan")
-    excel_file = relationship("ExcelFile", back_populates="session", uselist=False, cascade="all, delete-orphan")  # ONE-TO-ONE
-
+    excel_file = relationship("ExcelFile", back_populates="session", uselist=False, cascade="all, delete-orphan")
 
 # ============================================================================
-# MESSAGE MODEL (unchanged)
+# MESSAGE MODEL
 # ============================================================================
 
 class Message(Base):
-    """Chat message model"""
     __tablename__ = "messages"
     
     id = Column(String, primary_key=True, default=generate_uuid)
@@ -73,13 +68,11 @@ class Message(Base):
     
     session = relationship("Session", back_populates="messages")
 
-
 # ============================================================================
-# OPERATION MODEL (unchanged)
+# OPERATION MODEL
 # ============================================================================
 
 class Operation(Base):
-    """Excel operation log model"""
     __tablename__ = "operations"
     
     id = Column(String, primary_key=True, default=generate_uuid)
@@ -94,13 +87,11 @@ class Operation(Base):
     
     session = relationship("Session", back_populates="operations")
 
-
 # ============================================================================
-# EXCEL FILE MODEL (unchanged)
+# EXCEL FILE MODEL (ONE-TO-ONE with Session)
 # ============================================================================
 
 class ExcelFile(Base):
-    """Excel file metadata model - ONE file per session"""
     __tablename__ = "excel_files"
     
     id = Column(String, primary_key=True, default=generate_uuid)
@@ -108,44 +99,55 @@ class ExcelFile(Base):
     filepath = Column(String, nullable=False)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     meta_info = Column(Text, nullable=True)
-    session_id = Column(String, ForeignKey("sessions.id", ondelete="CASCADE"), unique=True, nullable=False)  # ONE-TO-ONE with UNIQUE constraint
+    session_id = Column(String, ForeignKey("sessions.id", ondelete="CASCADE"), unique=True, nullable=False)  # ONE-TO-ONE
     
-    # Relationship
     session = relationship("Session", back_populates="excel_file")
 
-
 # ============================================================================
-# TASK MODEL (NEW - for async task tracking)
+# TASK MODEL
 # ============================================================================
 
 class Task(Base):
-    """Async task tracking model"""
     __tablename__ = "tasks"
     
     id = Column(String, primary_key=True, default=generate_uuid)
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    session_id = Column(String, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=True)
+    session_id = Column(String, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
     
-    # Task details
     prompt = Column(Text, nullable=False)
-    uploaded_file_id = Column(String, nullable=True)  # Original file user uploaded
-    result_file_id = Column(String, nullable=True)    # Modified file to download
+    uploaded_file_id = Column(String, nullable=True)
+    result_file_id = Column(String, nullable=True)
     
-    # Status tracking
-    status = Column(String, default="pending")  # pending, processing, completed, failed
-    progress = Column(Integer, default=0)  # 0-100
-    current_step = Column(String, nullable=True)  # Current operation description
+    status = Column(String, default="pending")
+    progress = Column(Integer, default=0)
+    current_step = Column(String, nullable=True)
     
-    # Results
-    operations = Column(JSON, nullable=True)  # List of operations performed
-    response = Column(Text, nullable=True)    # Final response text
-    error = Column(Text, nullable=True)       # Error message if failed
+    operations = Column(JSON, nullable=True)
+    response = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
     
-    # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     
-    # Relationships
     user = relationship("User", back_populates="tasks")
     session = relationship("Session", back_populates="tasks")
+
+# ============================================================================
+# CREATE ALL TABLES
+# ============================================================================
+
+print("Creating database tables...")
+Base.metadata.create_all(engine)
+print("✅ ALL 6 tables created successfully!")
+
+# Verify
+import sqlite3
+conn = sqlite3.connect('workflowgenie.db')
+cursor = conn.cursor()
+cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+tables = cursor.fetchall()
+print(f"\n📋 Tables in database: {[t[0] for t in tables]}")
+conn.close()
+
+print("\n🎉 Database ready for use!")
