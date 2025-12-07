@@ -399,6 +399,15 @@ async def _handle_excel_operation(
         
         logger.info(f"📋 Context: {len(available_files)} files, {len(recent_operations)} recent operations")
         
+        # Get column headers for context (if file_id provided)
+        column_headers = []
+        if file_id:
+            try:
+                column_headers = await mcp_service.get_column_headers(file_id, sheet_name)
+                logger.info(f"📊 Column headers: {column_headers}")
+            except Exception as e:
+                logger.warning(f"Could not get column headers: {e}")
+        
         # ═══════════════════════════════════════════════════════════════
         # STEP 2: BROADCAST PLANNING STATUS
         # ═══════════════════════════════════════════════════════════════
@@ -422,7 +431,8 @@ async def _handle_excel_operation(
                 "sheet_name": sheet_name,
                 "session_summary": session_summary,
                 "available_files": available_files,
-                "recent_operations": recent_operations
+                "recent_operations": recent_operations,
+                "column_headers": column_headers
             }
         )
         

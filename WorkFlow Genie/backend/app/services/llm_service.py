@@ -1,7 +1,6 @@
 """
-LLM Service - FINAL PRODUCTION VERSION
-Ultra-detailed prompts for Excel automation via MCP tools
-Handles session context and natural language understanding
+LLM Service - ENHANCED WITH STUDENT DEMO EXAMPLES
+Comprehensive prompts with real demo scenarios
 """
 
 from openai import OpenAI
@@ -228,13 +227,14 @@ Generate a friendly response:
     def _build_system_prompt(self, session_summary: Optional[str] = None) -> str:
         """Build system prompt for general conversation"""
         
-        base_prompt = """You are WorkflowGenie, an AI assistant specialized in Excel automation.
+        base_prompt = """You are WorkflowGenie, an AI assistant specialized in Excel automation for educational institutions and businesses.
 
 You help users work with Excel files through natural language. You understand requests like:
 - "Update John's salary to 65000"
 - "Give everyone a 10% raise"
+- "Calculate total marks for all students"
+- "Assign grades based on average"
 - "Show me employees earning less than 50k"
-- "Calculate average marks by subject"
 
 Be friendly, concise, and helpful. When users ask about Excel operations, understand their intent naturally."""
         
@@ -244,11 +244,30 @@ Be friendly, concise, and helpful. When users ask about Excel operations, unders
         return base_prompt
     
     def _build_planning_prompt(self, user_intent: str, context: Dict) -> str:
-        """Build ultra-detailed planning prompt for Excel operations"""
+        """Build ultra-detailed planning prompt with student demo examples"""
         
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        prompt = f"""You are an Excel automation planner. Analyze the user's intent and generate a step-by-step execution plan.
+        # Get actual column headers from context
+        column_headers = context.get('column_headers', [])
+        column_headers_str = ', '.join(column_headers) if column_headers else 'Not available (read data first)'
+        
+        # Try to identify subject columns for examples
+        subject_columns = []
+        for col in column_headers:
+            col_lower = col.lower()
+            if any(subj in col_lower for subj in ['math', 'physics', 'chemistry', 'english', 'science', 'marks', 'score']):
+                subject_columns.append(col)
+        
+        # If no subject columns found, use any numeric-looking columns after first 2
+        if not subject_columns and len(column_headers) > 2:
+            subject_columns = column_headers[2:min(5, len(column_headers))]
+        
+        subject_columns_str = json.dumps(subject_columns) if subject_columns else '["Subject1", "Subject2", "Subject3"]'
+        
+        prompt = f"""You are an Excel automation planner specialized in student management and business operations.
+
+Analyze the user's intent and generate a step-by-step execution plan.
 
 ═══════════════════════════════════════════════════════════════════════════════
 CURRENT CONTEXT
@@ -257,6 +276,9 @@ CURRENT CONTEXT
 Date/Time: {current_time}
 File ID: {context.get('file_id', 'Not provided')}
 Sheet Name: {context.get('sheet_name', 'Not provided')}
+
+*** ACTUAL COLUMN HEADERS IN THIS FILE: {column_headers_str} ***
+(Use ONLY these exact column names in your parameters!)
 
 Session Summary: {context.get('session_summary', 'New session')}
 
@@ -273,222 +295,225 @@ USER REQUEST
 {user_intent}
 
 ═══════════════════════════════════════════════════════════════════════════════
-AVAILABLE MCP TOOLS (All 16 Tools)
+AVAILABLE MCP TOOLS (All 19 Tools)
 ═══════════════════════════════════════════════════════════════════════════════
 
 BASIC TOOLS (1-9):
 
-1. create_workbook
-   Purpose: Create new Excel file with custom sheets
-   When: User wants new file
-   Parameters: filename (str), sheets (List[str])
-   Example: "Create students.xlsx" → create_workbook
-   IMPORTANT: After creating file, if user mentions columns, ALWAYS use write_range to add headers in row 1
+1. create_workbook - Create new Excel file
+2. csv_to_excel - Import CSV data
+3. write_range - Write 2D data array
+4. update_cell - Update single cell by address
+5. apply_formula - Apply Excel formula
+6. read_range - Read specific cell range
+7. get_file_metadata - Get file info and sheets
+8. update_by_search - Search and update
+9. smart_update - Update person's field (auto-detects columns)
 
-2. csv_to_excel
-   Purpose: Import CSV data into Excel
-   When: User has CSV file to convert
-   Parameters: csv_path (str), filename (str)
-   Example: "Import data.csv" → csv_to_excel
+ADVANCED TOOLS (10-19):
 
-3. write_range
-   Purpose: Write 2D data array to range
-   When: Bulk data entry needed
-   Parameters: file_id, sheet_name, start_cell, data (2D array)
-   Example: Write table data → write_range
+10. read_data - Read all data from sheet
+11. add_row - Add new row
+12. delete_row - Delete row by person name
+13. bulk_update - Update multiple rows matching condition (WITH FILTER)
+14. filter_data - Find rows matching condition
+15. calculate_aggregate - Calculate sum/average/count/min/max
+16. sort_data - Sort sheet by column
 
-4. update_cell
-   Purpose: Update single cell by address
-   When: User specifies exact cell (A1, B2, etc.)
-   Parameters: file_id, sheet_name, cell_address, value
-   Example: "Set A1 to 100" → update_cell
+NEW TOOLS FOR STUDENT MANAGEMENT:
 
-5. apply_formula
-   Purpose: Apply Excel formula
-   When: User wants calculation formula
-   Parameters: file_id, sheet_name, cell_address, formula
-   Example: "Add SUM formula" → apply_formula
+17. bulk_update_all - Update ALL rows WITHOUT filter
+    Use when: "everyone", "all students", NO filter mentioned
+    Operations: add, multiply, subtract, divide, set
+    Example: "Add 5 to everyone's Math" → bulk_update_all
 
-6. read_range
-   Purpose: Read specific cell range
-   When: User mentions specific cells like "A1 to C10", "read cells A1:C10", "show me B2 to D5"
-   Parameters: file_id, sheet_name, range_notation (format: "A1:C10")
-   Example: "Read cells A1 to C3" → read_range with range_notation="A1:C3"
-   Example: "Show me range B2:D10" → read_range with range_notation="B2:D10"
+18. calculate_column - Calculate new column from existing columns
+    Use when: "calculate total", "calculate average"
+    Operations: SUM, AVERAGE, MIN, MAX
+    Example: "Calculate total marks" → calculate_column with SUM
 
-7. get_file_metadata
-   Purpose: Get file info and list of all sheets
-   When: User asks "what sheets", "list sheets", "show sheets", "file info", "sheet names"
-   Parameters: file_id
-   Example: "What sheets are in this file?" → get_file_metadata
-   Example: "List all sheets" → get_file_metadata
-   Example: "Show me sheet names" → get_file_metadata
-
-8. update_by_search
-   Purpose: Find value in one column, update another
-   When: Search-replace pattern
-   Parameters: file_id, sheet_name, search_column, search_value, update_column, new_value
-   Example: "Find John in Name, set Status to Active" → update_by_search
-
-9. smart_update
-   Purpose: Update person's field (auto-detects columns)
-   When: User mentions ONE person by name
-   Parameters: file_id, sheet_name, person_name, field_name, new_value
-   Example: "Update Ahmed's Math to 95" → smart_update
-   Example: "Change Sara's salary to 75000" → smart_update
-
-ADVANCED TOOLS (10-16):
-
-10. read_data
-    Purpose: Read all data from sheet
-    When: User wants to see all data, count rows
-    Parameters: file_id, sheet_name, max_rows (default 100)
-    Example: "Show me all students" → read_data
-    Example: "Display all employees" → read_data
-
-11. add_row
-    Purpose: Add new row to sheet
-    When: User wants to add new entry
-    Parameters: file_id, sheet_name, data (list)
-    Example: "Add student Ali with Math 85" → add_row
-    Example: "Add new employee John Smith" → add_row
-
-12. delete_row
-    Purpose: Delete row by person name
-    When: User wants to remove someone
-    Parameters: file_id, sheet_name, person_name
-    Example: "Delete Ahmed from file" → delete_row
-    Example: "Remove Sara Khan" → delete_row
-
-13. bulk_update
-    Purpose: Update MULTIPLE rows matching condition
-    When: User says "all", "everyone", "each", multiple targets
-    Parameters: file_id, sheet_name, filter_column, filter_value, update_column, operation, value
-    Operations: "multiply" (for percentages), "add" (for additions), "set" (for fixed values)
-    Example: "Give everyone in Sales a 10% raise" → bulk_update with multiply 1.1
-    Example: "Add 5000 to all salaries" → bulk_update with add 5000
-    Example: "Set all statuses to Active" → bulk_update with set "Active"
-
-14. filter_data
-    Purpose: Find rows matching condition
-    When: User wants to "show", "find", "filter"
-    Parameters: file_id, sheet_name, column, operator, value
-    Operators: "<", ">", "=", "contains"
-    Example: "Show marks > 85" → filter_data
-    Example: "Find salary < 50000" → filter_data
-    Example: "Students in Engineering" → filter_data with contains
-
-15. calculate_aggregate
-    Purpose: Calculate sum, average, count, min, max
-    When: User wants aggregated calculations
-    Parameters: file_id, sheet_name, column, operation, group_by (optional)
-    Operations: "sum", "average", "count", "min", "max"
-    Example: "Average salary" → calculate_aggregate
-    Example: "Average by department" → calculate_aggregate with group_by
-    Example: "Count students" → calculate_aggregate with count
-
-16. sort_data
-    Purpose: Sort sheet by column
-    When: User wants data sorted
-    Parameters: file_id, sheet_name, sort_by, ascending (bool)
-    Example: "Sort by salary descending" → sort_data with ascending=False
-    Example: "Sort by name" → sort_data with ascending=True
+19. assign_grades - Assign letter grades based on scores
+    Use when: User mentions grades with conditions
+    Example: "Assign grades: 90+ is A+, 80-89 is A..."
 
 ═══════════════════════════════════════════════════════════════════════════════
-CRITICAL DECISION RULES (MUST FOLLOW!)
+CRITICAL DECISION RULES
 ═══════════════════════════════════════════════════════════════════════════════
 
-Rule 1: Identify Operation Type
-- Create/add new → add_row or create_workbook
-- Update existing → smart_update or bulk_update
-- Find/filter → filter_data or read_data
-- Calculate/aggregate → calculate_aggregate
-- Delete/remove → delete_row
-- Sort/order → sort_data
+Rule 1: bulk_update vs bulk_update_all (MOST IMPORTANT!)
+- WITH filter → bulk_update
+  Example: "Update Marketing department" → bulk_update
+- WITHOUT filter → bulk_update_all
+  Example: "Update everyone" → bulk_update_all
 
-Rule 2: Count Targets
-- ONE person by name → smart_update
-- MULTIPLE people or condition → bulk_update
-- Example: "Update Ahmed" → smart_update
-- Example: "Update all in Sales" → bulk_update
+Rule 2: Calculate Operations
+- "calculate total", "sum of marks" → calculate_column with SUM
+- "calculate average" → calculate_column with AVERAGE
+- "find highest" → calculate_aggregate with max
 
-Rule 3: Detect Keywords
-- "all", "everyone", "each" → bulk_update
-- "find", "show", "filter" → filter_data
-- "average", "sum", "count" → calculate_aggregate
-- "sort", "order" → sort_data
+Rule 3: Grade Assignment
+- "assign grades" + conditions → assign_grades
+- Parse: "90+ is A+" → {{"A+": {{"min": 90}}}}
+- Parse: "80-89 is A" → {{"A": {{"min": 80, "max": 89}}}}
 
-Rule 4: Understand Math Operations
-- "10% raise", "increase by 10%" → bulk_update with multiply 1.1
-- "add 5000", "increase by 5000" → bulk_update with add 5000
-- "set to 50000" → bulk_update with set 50000
-
-Rule 5: Handle Percentages CORRECTLY
-- "10% raise" means multiply by 1.10 (not 0.10!)
-- "5% bonus" means multiply by 1.05
-- "20% discount" means multiply by 0.80
-- NEVER use 0.10 for 10% increase - ALWAYS use 1.10!
-
-Rule 6: Recognize Grouping
-- "by department", "by subject", "per category" → use group_by parameter in calculate_aggregate
-- Example: "Average salary by department" → calculate_aggregate with group_by="department"
+Rule 4: Multi-Step Operations
+- Break complex requests into steps
+- Example: "Calculate total and average" = 2 steps
+- Example: "Calculate and assign grades" = 3 steps
 
 ═══════════════════════════════════════════════════════════════════════════════
-EXAMPLE TRANSLATIONS
+STUDENT MANAGEMENT DEMO EXAMPLES (Learn from these!)
 ═══════════════════════════════════════════════════════════════════════════════
 
-Input: "Update Ahmed Ali's Math marks to 95"
-Analysis: ONE person (Ahmed Ali), field (Math), new value (95)
-Tool: smart_update
-Output:
+IMPORTANT: In all examples below, use the ACTUAL column headers from the file context above!
+Available columns: {column_headers_str}
+Subject/Numeric columns to use for calculations: {subject_columns_str}
+
+EXAMPLE 1: Add Bonus Marks (bulk_update_all)
+Input: "Add 5 bonus marks to everyone's Math score"
 {{
   "steps": [
     {{
       "step": 1,
-      "tool": "smart_update",
+      "tool": "bulk_update_all",
       "parameters": {{
         "file_id": "{context.get('file_id')}",
         "sheet_name": "{context.get('sheet_name')}",
-        "person_name": "Ahmed Ali",
-        "field_name": "Math",
-        "new_value": 95
+        "update_column": "<use actual column name from headers>",
+        "operation": "add",
+        "value": 5
       }},
-      "description": "Update Ahmed Ali's Math marks to 95"
+      "description": "Add 5 bonus marks to all Math scores"
     }}
   ]
 }}
 
 ---
 
-Input: "Give everyone in Engineering a 10% raise"
-Analysis: MULTIPLE people (everyone in Engineering), percentage (10% = multiply by 1.1)
-Tool: bulk_update
-Output:
+EXAMPLE 2: Calculate Total Marks (calculate_column)
+Input: "Calculate total marks for all students"
 {{
   "steps": [
     {{
       "step": 1,
-      "tool": "bulk_update",
+      "tool": "calculate_column",
       "parameters": {{
         "file_id": "{context.get('file_id')}",
         "sheet_name": "{context.get('sheet_name')}",
-        "filter_column": "Department",
-        "filter_value": "Engineering",
-        "update_column": "Salary",
-        "operation": "multiply",
-        "value": 1.1
+        "target_column": "Total",
+        "operation": "SUM",
+        "source_columns": {subject_columns_str}
       }},
-      "description": "Give 10% raise to all Engineering employees"
+      "description": "Calculate total marks from all subjects"
     }}
   ]
 }}
 
 ---
 
-Input: "Show me all students with Math marks greater than 85"
-Analysis: Filter operation, condition (>), value (85)
-Tool: filter_data
-Output:
+EXAMPLE 3: Calculate Average (calculate_column)
+Input: "Calculate average marks for all students"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "calculate_column",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "target_column": "Average",
+        "operation": "AVERAGE",
+        "source_columns": {subject_columns_str}
+      }},
+      "description": "Calculate average marks"
+    }}
+  ]
+}}
+
+---
+
+EXAMPLE 4: Assign Grades (assign_grades)
+Input: "Assign grades: 90 and above is A+, 80-89 is A, 70-79 is B, 60-69 is C, 50-59 is D, below 50 is F"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "assign_grades",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "score_column": "Average",
+        "grade_column": "Grade",
+        "grade_rules": {{
+          "A+": {{"min": 90}},
+          "A": {{"min": 80, "max": 89}},
+          "B": {{"min": 70, "max": 79}},
+          "C": {{"min": 60, "max": 69}},
+          "D": {{"min": 50, "max": 59}},
+          "F": {{"max": 49}}
+        }}
+      }},
+      "description": "Assign letter grades based on average"
+    }}
+  ]
+}}
+
+---
+
+EXAMPLE 5: Multi-Step Operation
+Input: "Calculate total and average marks, then assign grades"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "calculate_column",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "target_column": "Total",
+        "operation": "SUM",
+        "source_columns": {subject_columns_str}
+      }},
+      "description": "Calculate total marks"
+    }},
+    {{
+      "step": 2,
+      "tool": "calculate_column",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "target_column": "Average",
+        "operation": "AVERAGE",
+        "source_columns": {subject_columns_str}
+      }},
+      "description": "Calculate average marks"
+    }},
+    {{
+      "step": 3,
+      "tool": "assign_grades",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "score_column": "Average",
+        "grade_column": "Grade",
+        "grade_rules": {{
+          "A+": {{"min": 90}},
+          "A": {{"min": 80, "max": 89}},
+          "B": {{"min": 70, "max": 79}},
+          "C": {{"min": 60, "max": 69}},
+          "D": {{"min": 50, "max": 59}},
+          "F": {{"max": 49}}
+        }}
+      }},
+      "description": "Assign grades"
+    }}
+  ]
+}}
+
+---
+
+EXAMPLE 6: Find Top Students (filter_data)
+Input: "Show me students with A+ grade"
 {{
   "steps": [
     {{
@@ -497,21 +522,40 @@ Output:
       "parameters": {{
         "file_id": "{context.get('file_id')}",
         "sheet_name": "{context.get('sheet_name')}",
-        "column": "Math",
-        "operator": ">",
-        "value": 85
+        "column": "Grade",
+        "operator": "=",
+        "value": "A+"
       }},
-      "description": "Filter students with Math > 85"
+      "description": "Filter students with A+ grade"
     }}
   ]
 }}
 
 ---
 
-Input: "Calculate average salary by department"
-Analysis: Aggregate with grouping
-Tool: calculate_aggregate
-Output:
+EXAMPLE 7: Find Struggling Students (filter_data)
+Input: "Show students with average below 60"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "filter_data",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "column": "Average",
+        "operator": "<",
+        "value": 60
+      }},
+      "description": "Find students with low average"
+    }}
+  ]
+}}
+
+---
+
+EXAMPLE 8: Class Statistics (calculate_aggregate)
+Input: "What is the highest average in the class?"
 {{
   "steps": [
     {{
@@ -520,21 +564,18 @@ Output:
       "parameters": {{
         "file_id": "{context.get('file_id')}",
         "sheet_name": "{context.get('sheet_name')}",
-        "column": "Salary",
-        "operation": "average",
-        "group_by": "Department"
+        "column": "Average",
+        "operation": "max"
       }},
-      "description": "Calculate average salary grouped by department"
+      "description": "Find maximum average"
     }}
   ]
 }}
 
 ---
 
-Input: "Add student Sara Khan with Math 90, English 85, Science 88"
-Analysis: Add new entry
-Tool: add_row
-Output:
+EXAMPLE 9: Add New Student (add_row)
+Input: "Add new student Hamza Khan, Roll Number 2021-CS-111, Math 75, Physics 80, Chemistry 78"
 {{
   "steps": [
     {{
@@ -543,19 +584,38 @@ Output:
       "parameters": {{
         "file_id": "{context.get('file_id')}",
         "sheet_name": "{context.get('sheet_name')}",
-        "data": ["Sara Khan", 90, 85, 88]
+        "data": ["Hamza Khan", "2021-CS-111", 75, 80, 78]
       }},
-      "description": "Add new student Sara Khan with marks"
+      "description": "Add new student"
     }}
   ]
 }}
 
 ---
 
-Input: "Delete Ahmed Ali from the file"
-Analysis: Remove entry
-Tool: delete_row
-Output:
+EXAMPLE 10: Update One Student (smart_update)
+Input: "Update Sara Khan's Math marks to 75"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "smart_update",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "person_name": "Sara Khan",
+        "field_name": "Math",
+        "new_value": 75
+      }},
+      "description": "Update Sara Khan's Math marks"
+    }}
+  ]
+}}
+
+---
+
+EXAMPLE 11: Delete Student (delete_row)
+Input: "Remove Fatima Noor from the list"
 {{
   "steps": [
     {{
@@ -564,19 +624,17 @@ Output:
       "parameters": {{
         "file_id": "{context.get('file_id')}",
         "sheet_name": "{context.get('sheet_name')}",
-        "person_name": "Ahmed Ali"
+        "person_name": "Fatima Noor"
       }},
-      "description": "Delete Ahmed Ali from sheet"
+      "description": "Delete Fatima Noor"
     }}
   ]
 }}
 
 ---
 
-Input: "Sort students by total marks, highest first"
-Analysis: Sort descending
-Tool: sort_data
-Output:
+EXAMPLE 12: Sort by Performance (sort_data)
+Input: "Sort students by average marks descending"
 {{
   "steps": [
     {{
@@ -585,47 +643,42 @@ Output:
       "parameters": {{
         "file_id": "{context.get('file_id')}",
         "sheet_name": "{context.get('sheet_name')}",
-        "sort_by": "Total",
+        "sort_by": "Average",
         "ascending": false
       }},
-      "description": "Sort by Total marks in descending order"
+      "description": "Sort by average descending"
     }}
   ]
 }}
 
 ═══════════════════════════════════════════════════════════════════════════════
-OUTPUT FORMAT (STRICT JSON)
+YOUR TASK
 ═══════════════════════════════════════════════════════════════════════════════
 
-IMPORTANT:
-- Output ONLY valid JSON
-- No markdown code blocks
-- No extra text or explanations
-- Use exact tool names from the list above
-- Use exact parameter names
-- For percentages: ALWAYS multiply by 1.XX (e.g., 1.10 for 10%)
+Based on the user's request above, generate a JSON plan with steps.
 
-Required JSON structure:
+CRITICAL RULES:
+1. Use ONLY the ACTUAL column names from the file: {column_headers_str}
+2. For calculate_column source_columns, use: {subject_columns_str}
+3. Match column names EXACTLY as they appear (case-sensitive)
+4. If the user mentions a column like "Math", find the matching column from the actual headers
+
+Use the examples as a guide. Match the pattern and structure.
+
+Output ONLY valid JSON (no markdown, no explanation):
 {{
   "steps": [
     {{
       "step": 1,
       "tool": "tool_name",
-      "parameters": {{
-        "param1": "value1",
-        "param2": "value2"
-      }},
-      "description": "Brief description of what this step does"
+      "parameters": {{}},
+      "description": "what this step does"
     }}
   ]
 }}
-
-═══════════════════════════════════════════════════════════════════════════════
-
-Now analyze the user request and generate the execution plan:
 """
         
         return prompt
 
-# Global service instance
+# Create service instance
 llm_service = LLMService()

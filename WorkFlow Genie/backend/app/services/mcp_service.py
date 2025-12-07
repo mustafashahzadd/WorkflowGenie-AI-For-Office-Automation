@@ -70,6 +70,12 @@ class MCPService:
                 result = await self.calculate_aggregate(**parameters)
             elif tool_name == "sort_data":
                 result = await self.sort_data(**parameters)
+            elif tool_name == "bulk_update_all":
+                result = await self.bulk_update_all(**parameters)
+            elif tool_name == "calculate_column":
+                result = await self.calculate_column(**parameters)
+            elif tool_name == "assign_grades":
+                result = await self.assign_grades(**parameters)
             else:
                 raise ValueError(f"Unknown tool: {tool_name}")
             
@@ -919,7 +925,520 @@ class MCPService:
             "message": f"Sorted by {sort_by}"
         }
     
+    # async def bulk_update_all(
+    #     self,
+    #     file_id: str,
+    #     sheet_name: str,
+    #     update_column: str,
+    #     operation: str,
+    #     value: Any
+    # ) -> Dict:
+    #     """
+    #     Tool 17: Bulk update ALL rows (no filter)
+        
+    #     Use for: "Increase everyone's age by 20", "Double all salaries"
+    #     """
+        
+    #     filepath = self._get_filepath(file_id)
+    #     wb = openpyxl.load_workbook(filepath)
+        
+    #     if sheet_name not in wb.sheetnames:
+    #         raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+    #     ws = wb[sheet_name]
+    #     header_row = self._find_header_row(ws)
+        
+    #     # Get headers
+    #     headers = {}
+    #     for col_idx in range(1, ws.max_column + 1):
+    #         header = ws.cell(row=header_row, column=col_idx).value
+    #         if header:
+    #             headers[str(header).strip().lower()] = col_idx
+        
+    #     update_col = headers.get(update_column.lower())
+    #     if not update_col:
+    #         raise ValueError(f"Column '{update_column}' not found")
+        
+    #     updated_rows = []
+        
+    #     # Update ALL rows
+    #     for row_idx in range(header_row + 1, ws.max_row + 1):
+    #         old_value = ws.cell(row=row_idx, column=update_col).value
+            
+    #         if old_value is None or old_value == "":
+    #             continue
+            
+    #         try:
+    #             if operation == "add":
+    #                 new_value = float(old_value) + float(value)
+    #             elif operation == "multiply":
+    #                 new_value = float(old_value) * float(value)
+    #             elif operation == "subtract":
+    #                 new_value = float(old_value) - float(value)
+    #             elif operation == "divide":
+    #                 new_value = float(old_value) / float(value)
+    #             elif operation == "set":
+    #                 new_value = value
+    #             else:
+    #                 new_value = value
+                
+    #             ws.cell(row=row_idx, column=update_col, value=new_value)
+    #             updated_rows.append({
+    #                 "row": row_idx,
+    #                 "old_value": old_value,
+    #                 "new_value": new_value
+    #             })
+            
+    #         except (ValueError, TypeError) as e:
+    #             logger.warning(f"Skipped row {row_idx}: {e}")
+    #             continue
+        
+    #     wb.save(filepath)
+    #     logger.info(f"Bulk updated ALL {len(updated_rows)} rows")
+        
+    #     return {
+    #         "file_id": file_id,
+    #         "sheet_name": sheet_name,
+    #         "column": update_column,
+    #         "operation": operation,
+    #         "value": value,
+    #         "updated_count": len(updated_rows),
+    #         "updated_rows": updated_rows,
+    #         "message": f"Updated {len(updated_rows)} rows in '{update_column}'"
+    #     }
+    
+    # async def calculate_column(
+    #     self,
+    #     file_id: str,
+    #     sheet_name: str,
+    #     target_column: str,
+    #     operation: str,
+    #     source_columns: List[str]
+    # ) -> Dict:
+    #     """
+    #     Tool 18: Calculate column from other columns
+        
+    #     Use for: "Calculate total marks", "Calculate average"
+    #     Operations: SUM, AVERAGE, MIN, MAX
+    #     """
+        
+    #     filepath = self._get_filepath(file_id)
+    #     wb = openpyxl.load_workbook(filepath)
+        
+    #     if sheet_name not in wb.sheetnames:
+    #         raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+    #     ws = wb[sheet_name]
+    #     header_row = self._find_header_row(ws)
+        
+    #     # Get headers
+    #     headers = {}
+    #     for col_idx in range(1, ws.max_column + 1):
+    #         header = ws.cell(row=header_row, column=col_idx).value
+    #         if header:
+    #             headers[str(header).strip().lower()] = col_idx
+        
+    #     # Find source columns
+    #     source_cols = []
+    #     for col_name in source_columns:
+    #         col_idx = headers.get(col_name.lower())
+    #         if not col_idx:
+    #             raise ValueError(f"Column '{col_name}' not found")
+    #         source_cols.append(col_idx)
+        
+    #     # Get or create target column
+    #     target_col = headers.get(target_column.lower())
+    #     if not target_col:
+    #         target_col = ws.max_column + 1
+    #         ws.cell(row=header_row, column=target_col, value=target_column)
+        
+    #     # Calculate for each row
+    #     calculated = 0
+    #     for row_idx in range(header_row + 1, ws.max_row + 1):
+    #         values = []
+    #         for col_idx in source_cols:
+    #             val = ws.cell(row=row_idx, column=col_idx).value
+    #             if val is not None and val != "":
+    #                 try:
+    #                     values.append(float(val))
+    #                 except:
+    #                     pass
+            
+    #         if values:
+    #             if operation.upper() == "SUM":
+    #                 result = sum(values)
+    #             elif operation.upper() == "AVERAGE":
+    #                 result = sum(values) / len(values)
+    #             elif operation.upper() == "MIN":
+    #                 result = min(values)
+    #             elif operation.upper() == "MAX":
+    #                 result = max(values)
+    #             else:
+    #                 result = sum(values)
+                
+    #             ws.cell(row=row_idx, column=target_col, value=round(result, 2))
+    #             calculated += 1
+        
+    #     wb.save(filepath)
+    #     logger.info(f"Calculated {target_column} for {calculated} rows")
+        
+    #     return {
+    #         "file_id": file_id,
+    #         "sheet_name": sheet_name,
+    #         "target_column": target_column,
+    #         "operation": operation,
+    #         "source_columns": source_columns,
+    #         "rows_calculated": calculated,
+    #         "message": f"Calculated {target_column} for {calculated} students"
+    #     }
+    
+    # async def assign_grades(
+    #     self,
+    #     file_id: str,
+    #     sheet_name: str,
+    #     score_column: str,
+    #     grade_column: str,
+    #     grade_rules: Dict[str, Dict]
+    # ) -> Dict:
+    #     """
+    #     Tool 19: Assign grades based on score ranges
+        
+    #     Use for: "Assign grades based on average"
+        
+    #     Example grade_rules:
+    #     {
+    #         "A+": {"min": 90},
+    #         "A": {"min": 80, "max": 89},
+    #         "B": {"min": 70, "max": 79},
+    #         "C": {"min": 60, "max": 69},
+    #         "D": {"min": 50, "max": 59},
+    #         "F": {"max": 49}
+    #     }
+    #     """
+        
+    #     filepath = self._get_filepath(file_id)
+    #     wb = openpyxl.load_workbook(filepath)
+        
+    #     if sheet_name not in wb.sheetnames:
+    #         raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+    #     ws = wb[sheet_name]
+    #     header_row = self._find_header_row(ws)
+        
+    #     # Get headers
+    #     headers = {}
+    #     for col_idx in range(1, ws.max_column + 1):
+    #         header = ws.cell(row=header_row, column=col_idx).value
+    #         if header:
+    #             headers[str(header).strip().lower()] = col_idx
+        
+    #     score_col = headers.get(score_column.lower())
+    #     if not score_col:
+    #         raise ValueError(f"Column '{score_column}' not found")
+        
+    #     # Get or create grade column
+    #     grade_col = headers.get(grade_column.lower())
+    #     if not grade_col:
+    #         grade_col = ws.max_column + 1
+    #         ws.cell(row=header_row, column=grade_col, value=grade_column)
+        
+    #     # Assign grades
+    #     assigned = 0
+    #     grade_distribution = {}
+        
+    #     for row_idx in range(header_row + 1, ws.max_row + 1):
+    #         score = ws.cell(row=row_idx, column=score_col).value
+            
+    #         if score is None or score == "":
+    #             continue
+            
+    #         try:
+    #             score = float(score)
+    #         except:
+    #             continue
+            
+    #         # Find matching grade
+    #         grade = None
+    #         for grade_name, rules in grade_rules.items():
+    #             min_score = rules.get("min", 0)
+    #             max_score = rules.get("max", 100)
+                
+    #             if min_score <= score <= max_score:
+    #                 grade = grade_name
+    #                 break
+            
+    #         if grade:
+    #             ws.cell(row=row_idx, column=grade_col, value=grade)
+    #             grade_distribution[grade] = grade_distribution.get(grade, 0) + 1
+    #             assigned += 1
+        
+    #     wb.save(filepath)
+    #     logger.info(f"Assigned grades to {assigned} students")
+        
+    #     return {
+    #         "file_id": file_id,
+    #         "sheet_name": sheet_name,
+    #         "score_column": score_column,
+    #         "grade_column": grade_column,
+    #         "students_graded": assigned,
+    #         "grade_distribution": grade_distribution,
+    #         "message": f"Assigned grades to {assigned} students: {grade_distribution}"
+    #     }
+    
+    # ==================== NEW TOOLS FOR STUDENT DEMO ====================
+    
+    async def bulk_update_all(
+        self,
+        file_id: str,
+        sheet_name: str,
+        update_column: str,
+        operation: str,
+        value: Any
+    ) -> Dict:
+        """Tool 17: Bulk update ALL rows (no filter)"""
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        header_row = self._find_header_row(ws)
+        
+        headers = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header = ws.cell(row=header_row, column=col_idx).value
+            if header:
+                headers[str(header).strip().lower()] = col_idx
+        
+        update_col = headers.get(update_column.lower())
+        if not update_col:
+            raise ValueError(f"Column '{update_column}' not found")
+        
+        updated_rows = []
+        
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            old_value = ws.cell(row=row_idx, column=update_col).value
+            
+            if old_value is None or old_value == "":
+                continue
+            
+            try:
+                if operation == "add":
+                    new_value = float(old_value) + float(value)
+                elif operation == "multiply":
+                    new_value = float(old_value) * float(value)
+                elif operation == "subtract":
+                    new_value = float(old_value) - float(value)
+                elif operation == "divide":
+                    new_value = float(old_value) / float(value)
+                elif operation == "set":
+                    new_value = value
+                else:
+                    new_value = value
+                
+                ws.cell(row=row_idx, column=update_col, value=new_value)
+                updated_rows.append({
+                    "row": row_idx,
+                    "old_value": old_value,
+                    "new_value": new_value
+                })
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Skipped row {row_idx}: {e}")
+                continue
+        
+        wb.save(filepath)
+        logger.info(f"Bulk updated ALL {len(updated_rows)} rows")
+        
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "column": update_column,
+            "operation": operation,
+            "value": value,
+            "updated_count": len(updated_rows),
+            "updated_rows": updated_rows,
+            "message": f"Updated {len(updated_rows)} rows in '{update_column}'"
+        }
+    
+    async def calculate_column(
+        self,
+        file_id: str,
+        sheet_name: str,
+        target_column: str,
+        operation: str,
+        source_columns: List[str]
+    ) -> Dict:
+        """Tool 18: Calculate column from other columns"""
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        header_row = self._find_header_row(ws)
+        
+        headers = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header = ws.cell(row=header_row, column=col_idx).value
+            if header:
+                headers[str(header).strip().lower()] = col_idx
+        
+        source_cols = []
+        for col_name in source_columns:
+            col_idx = headers.get(col_name.lower())
+            if not col_idx:
+                raise ValueError(f"Column '{col_name}' not found")
+            source_cols.append(col_idx)
+        
+        target_col = headers.get(target_column.lower())
+        if not target_col:
+            target_col = ws.max_column + 1
+            ws.cell(row=header_row, column=target_col, value=target_column)
+        
+        calculated = 0
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            values = []
+            for col_idx in source_cols:
+                val = ws.cell(row=row_idx, column=col_idx).value
+                if val is not None and val != "":
+                    try:
+                        values.append(float(val))
+                    except:
+                        pass
+            
+            if values:
+                if operation.upper() == "SUM":
+                    result = sum(values)
+                elif operation.upper() == "AVERAGE":
+                    result = sum(values) / len(values)
+                elif operation.upper() == "MIN":
+                    result = min(values)
+                elif operation.upper() == "MAX":
+                    result = max(values)
+                else:
+                    result = sum(values)
+                
+                ws.cell(row=row_idx, column=target_col, value=round(result, 2))
+                calculated += 1
+        
+        wb.save(filepath)
+        logger.info(f"Calculated {target_column} for {calculated} rows")
+        
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "target_column": target_column,
+            "operation": operation,
+            "source_columns": source_columns,
+            "rows_calculated": calculated,
+            "message": f"Calculated {target_column} for {calculated} students"
+        }
+    
+    async def assign_grades(
+        self,
+        file_id: str,
+        sheet_name: str,
+        score_column: str,
+        grade_column: str,
+        grade_rules: Dict[str, Dict]
+    ) -> Dict:
+        """Tool 19: Assign grades based on score ranges"""
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        header_row = self._find_header_row(ws)
+        
+        headers = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header = ws.cell(row=header_row, column=col_idx).value
+            if header:
+                headers[str(header).strip().lower()] = col_idx
+        
+        score_col = headers.get(score_column.lower())
+        if not score_col:
+            raise ValueError(f"Column '{score_column}' not found")
+        
+        grade_col = headers.get(grade_column.lower())
+        if not grade_col:
+            grade_col = ws.max_column + 1
+            ws.cell(row=header_row, column=grade_col, value=grade_column)
+        
+        assigned = 0
+        grade_distribution = {}
+        
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            score = ws.cell(row=row_idx, column=score_col).value
+            
+            if score is None or score == "":
+                continue
+            
+            try:
+                score = float(score)
+            except:
+                continue
+            
+            grade = None
+            for grade_name, rules in grade_rules.items():
+                min_score = rules.get("min", 0)
+                max_score = rules.get("max", 100)
+                
+                if min_score <= score <= max_score:
+                    grade = grade_name
+                    break
+            
+            if grade:
+                ws.cell(row=row_idx, column=grade_col, value=grade)
+                grade_distribution[grade] = grade_distribution.get(grade, 0) + 1
+                assigned += 1
+        
+        wb.save(filepath)
+        logger.info(f"Assigned grades to {assigned} students")
+        
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "score_column": score_column,
+            "grade_column": grade_column,
+            "students_graded": assigned,
+            "grade_distribution": grade_distribution,
+            "message": f"Assigned grades to {assigned} students: {grade_distribution}"
+        }
+    
+
     # ==================== HELPER METHODS ====================
+    
+    async def get_column_headers(self, file_id: str, sheet_name: str) -> List[str]:
+        """Get column headers from a sheet for LLM context"""
+        try:
+            filepath = self._get_filepath(file_id)
+            wb = openpyxl.load_workbook(filepath)
+            
+            if sheet_name not in wb.sheetnames:
+                return []
+            
+            ws = wb[sheet_name]
+            header_row = self._find_header_row(ws)
+            
+            headers = []
+            for col_idx in range(1, ws.max_column + 1):
+                header = ws.cell(row=header_row, column=col_idx).value
+                if header:
+                    headers.append(str(header).strip())
+            
+            logger.info(f"Found headers: {headers}")
+            return headers
+        except Exception as e:
+            logger.error(f"Error getting headers: {e}")
+            return []
     
     async def list_files(self) -> List[Dict]:
         """List all Excel files"""
