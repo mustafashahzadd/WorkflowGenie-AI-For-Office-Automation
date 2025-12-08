@@ -159,7 +159,8 @@ Generate a concise summary (2-4 sentences only):
             'remove', 'show', 'display', 'find', 'search', 'filter', 'calculate',
             'average', 'sum', 'total', 'count', 'sort', 'raise', 'bonus', 
             'increase', 'decrease', 'salary', 'marks', 'grade', 'score',
-            'read', 'list', 'sheets', 'cells', 'range'
+            'read', 'list', 'sheets', 'cells', 'range', 'fill', 'random',
+            'column', 'put', 'insert', 'values', 'generate'
         ]
         
         # Action words that indicate operations
@@ -336,6 +337,12 @@ NEW TOOLS FOR STUDENT MANAGEMENT:
     Use when: User mentions grades with conditions
     Example: "Assign grades: 90+ is A+, 80-89 is A..."
 
+20. fill_column - Fill a column with values (random, fixed, or sequence)
+    Use when: "fill column with random values", "add random marks", "put 0 in all cells"
+    fill_type options: "random", "fixed", "sequence"
+    Example: "Fill Math column with random values 0-100" → fill_column with fill_type="random", min_value=0, max_value=100
+    Example: "Set all Status to Active" → fill_column with fill_type="fixed", fixed_value="Active"
+
 ═══════════════════════════════════════════════════════════════════════════════
 CRITICAL DECISION RULES
 ═══════════════════════════════════════════════════════════════════════════════
@@ -360,6 +367,32 @@ Rule 4: Multi-Step Operations
 - Break complex requests into steps
 - Example: "Calculate total and average" = 2 steps
 - Example: "Calculate and assign grades" = 3 steps
+
+Rule 5: Fill Column (IMPORTANT!)
+- "fill with random" → fill_column with fill_type="random"
+- "fill with 0" or "set all to X" → fill_column with fill_type="fixed"
+- "fill with sequence 1,2,3..." → fill_column with fill_type="sequence"
+- ALWAYS use fill_column tool for filling columns, NOT manual Excel instructions!
+
+EXAMPLE for fill_column:
+Input: "Fill maths column with random values between 0 and 100"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "fill_column",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "column_name": "maths",
+        "fill_type": "random",
+        "min_value": 0,
+        "max_value": 100
+      }},
+      "description": "Fill maths column with random values 0-100"
+    }}
+  ]
+}}
 
 ═══════════════════════════════════════════════════════════════════════════════
 STUDENT MANAGEMENT DEMO EXAMPLES (Learn from these!)

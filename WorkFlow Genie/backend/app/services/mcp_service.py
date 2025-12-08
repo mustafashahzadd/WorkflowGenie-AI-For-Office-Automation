@@ -36,6 +36,14 @@ class MCPService:
         
         start_time = time.time()
         
+        # Normalize parameter names (handle LLM variations)
+        if 'range' in parameters and 'start_cell' not in parameters:
+            parameters['start_cell'] = parameters.pop('range').split(':')[0]  # Take first cell if range like "A1:C1"
+        if 'cell' in parameters and 'cell_address' not in parameters:
+            parameters['cell_address'] = parameters.pop('cell')
+        if 'name' in parameters and 'person_name' not in parameters and 'filename' not in parameters:
+            parameters['person_name'] = parameters.pop('name')
+        
         try:
             if tool_name == "create_workbook":
                 result = await self.create_workbook(**parameters)
@@ -76,6 +84,8 @@ class MCPService:
                 result = await self.calculate_column(**parameters)
             elif tool_name == "assign_grades":
                 result = await self.assign_grades(**parameters)
+            elif tool_name == "fill_column":
+                result = await self.fill_column(**parameters)
             else:
                 raise ValueError(f"Unknown tool: {tool_name}")
             
@@ -1413,6 +1423,77 @@ class MCPService:
             "message": f"Assigned grades to {assigned} students: {grade_distribution}"
         }
     
+    async def fill_column(
+        self,
+        file_id: str,
+        sheet_name: str,
+        column_name: str,
+        fill_type: str = "random",
+        min_value: int = 0,
+        max_value: int = 100,
+        fixed_value: Any = None
+    ) -> Dict:
+        """
+        Tool 20: Fill a column with values
+        
+        fill_type options:
+        - "random": Random integers between min_value and max_value
+        - "fixed": Fill all cells with fixed_value
+        - "sequence": Fill with sequence from min_value incrementing by 1
+        """
+        import random
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        header_row = self._find_header_row(ws)
+        
+        # Find or create column
+        headers = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header = ws.cell(row=header_row, column=col_idx).value
+            if header:
+                headers[str(header).strip().lower()] = col_idx
+        
+        target_col = headers.get(column_name.lower())
+        if not target_col:
+            # Create new column
+            target_col = ws.max_column + 1
+            ws.cell(row=header_row, column=target_col, value=column_name)
+        
+        filled = 0
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            # Check if row has data (not empty)
+            has_data = any(ws.cell(row=row_idx, column=c).value for c in range(1, ws.max_column + 1) if c != target_col)
+            
+            if has_data:
+                if fill_type == "random":
+                    value = random.randint(min_value, max_value)
+                elif fill_type == "fixed":
+                    value = fixed_value
+                elif fill_type == "sequence":
+                    value = min_value + filled
+                else:
+                    value = random.randint(min_value, max_value)
+                
+                ws.cell(row=row_idx, column=target_col, value=value)
+                filled += 1
+        
+        wb.save(filepath)
+        logger.info(f"Filled {filled} cells in column '{column_name}'")
+        
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "column_name": column_name,
+            "fill_type": fill_type,
+            "rows_filled": filled,
+            "message": f"Filled {filled} cells in '{column_name}' with {fill_type} values"
+        }
 
     # ==================== HELPER METHODS ====================
     
