@@ -160,7 +160,8 @@ Generate a concise summary (2-4 sentences only):
             'average', 'sum', 'total', 'count', 'sort', 'raise', 'bonus', 
             'increase', 'decrease', 'salary', 'marks', 'grade', 'score',
             'read', 'list', 'sheets', 'cells', 'range', 'fill', 'random',
-            'column', 'put', 'insert', 'values', 'generate'
+            'column', 'put', 'insert', 'values', 'generate', 'replace', 'rename',
+            'swap', 'convert', 'substitute'
         ]
         
         # Action words that indicate operations
@@ -343,6 +344,15 @@ NEW TOOLS FOR STUDENT MANAGEMENT:
     Example: "Fill Math column with random values 0-100" → fill_column with fill_type="random", min_value=0, max_value=100
     Example: "Set all Status to Active" → fill_column with fill_type="fixed", fixed_value="Active"
 
+21. find_replace - Find and replace text (single/first match)
+    Use when: "change Ali to Taha", "replace John with Jane"
+    Parameters: find_value, replace_value, column (optional), first_only (default: True)
+    Example: "Change Ali to Taha" → find_replace with find_value="Ali", replace_value="Taha"
+
+22. bulk_find_replace - Find and replace ALL occurrences
+    Use when: "replace all X with Y", "change every occurrence"
+    Example: "Replace all Ali with Taha" → bulk_find_replace with find_value="Ali", replace_value="Taha"
+
 ═══════════════════════════════════════════════════════════════════════════════
 CRITICAL DECISION RULES
 ═══════════════════════════════════════════════════════════════════════════════
@@ -373,6 +383,47 @@ Rule 5: Fill Column (IMPORTANT!)
 - "fill with 0" or "set all to X" → fill_column with fill_type="fixed"
 - "fill with sequence 1,2,3..." → fill_column with fill_type="sequence"
 - ALWAYS use fill_column tool for filling columns, NOT manual Excel instructions!
+
+Rule 6: Find and Replace (IMPORTANT!)
+- Single replacement: "change Ali to Taha" → find_replace (default: first match only)
+- Bulk replacement: "replace all Ali with Taha", "change every X to Y" → bulk_find_replace
+- Keywords "all", "every", "each" indicate bulk replacement
+
+EXAMPLE for find_replace (single):
+Input: "Change Ali to Taha"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "find_replace",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "find_value": "Ali",
+        "replace_value": "Taha"
+      }},
+      "description": "Replace Ali with Taha"
+    }}
+  ]
+}}
+
+EXAMPLE for bulk_find_replace:
+Input: "Replace all Ali with Taha"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "bulk_find_replace",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "find_value": "Ali",
+        "replace_value": "Taha"
+      }},
+      "description": "Replace all occurrences of Ali with Taha"
+    }}
+  ]
+}}
 
 EXAMPLE for fill_column:
 Input: "Fill maths column with random values between 0 and 100"

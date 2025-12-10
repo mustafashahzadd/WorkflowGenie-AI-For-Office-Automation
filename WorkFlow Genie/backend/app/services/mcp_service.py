@@ -86,6 +86,10 @@ class MCPService:
                 result = await self.assign_grades(**parameters)
             elif tool_name == "fill_column":
                 result = await self.fill_column(**parameters)
+            elif tool_name == "find_replace":
+                result = await self.find_replace(**parameters)
+            elif tool_name == "bulk_find_replace":
+                result = await self.bulk_find_replace(**parameters)
             else:
                 raise ValueError(f"Unknown tool: {tool_name}")
             
@@ -1494,6 +1498,149 @@ class MCPService:
             "rows_filled": filled,
             "message": f"Filled {filled} cells in '{column_name}' with {fill_type} values"
         }
+    
+    async def find_replace(
+        self,
+        file_id: str,
+        sheet_name: str,
+        find_value: str,
+        replace_value: str,
+        column: Optional[str] = None,
+        match_case: bool = False,
+        first_only: bool = True
+    ) -> Dict:
+        """
+        Tool 21: Find and replace string values (single or first match)
+        
+        Use for: "Change Ali to Taha", "Replace John with Jane"
+        
+        Parameters:
+        - find_value: The text to find
+        - replace_value: The text to replace with
+        - column: Optional - limit search to specific column
+        - match_case: Whether to match case (default: False)
+        - first_only: If True, replace only first match (default: True)
+        """
+        
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        
+        ws = wb[sheet_name]
+        header_row = self._find_header_row(ws)
+        
+        # Get headers for column lookup
+        headers = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header = ws.cell(row=header_row, column=col_idx).value
+            if header:
+                headers[str(header).strip().lower()] = col_idx
+        
+        # Determine columns to search
+        if column:
+            target_col = headers.get(column.lower())
+            if not target_col:
+                raise ValueError(f"Column '{column}' not found")
+            search_cols = [target_col]
+        else:
+            search_cols = list(range(1, ws.max_column + 1))
+        
+        replaced = []
+        
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            for col_idx in search_cols:
+                cell = ws.cell(row=row_idx, column=col_idx)
+                cell_value = cell.value
+                
+                if cell_value is None:
+                    continue
+                
+                cell_str = str(cell_value)
+                
+                # Check for match
+                if match_case:
+                    found = find_value in cell_str
+                else:
+                    found = find_value.lower() in cell_str.lower()
+                
+                if found:
+                    # Perform replacement
+                    if match_case:
+                        new_value = cell_str.replace(find_value, replace_value)
+                    else:
+                        # Case-insensitive replace
+                        import re
+                        new_value = re.sub(re.escape(find_value), replace_value, cell_str, flags=re.IGNORECASE)
+                    
+                    cell.value = new_value
+                    replaced.append({
+                        "cell": f"{get_column_letter(col_idx)}{row_idx}",
+                        "old_value": cell_str,
+                        "new_value": new_value
+                    })
+                    
+                    if first_only:
+                        wb.save(filepath)
+                        logger.info(f"Replaced '{find_value}' with '{replace_value}' in 1 cell")
+                        return {
+                            "file_id": file_id,
+                            "sheet_name": sheet_name,
+                            "find_value": find_value,
+                            "replace_value": replace_value,
+                            "replaced_count": 1,
+                            "replacements": replaced,
+                            "message": f"Replaced '{find_value}' with '{replace_value}' in cell {replaced[0]['cell']}"
+                        }
+        
+        if not replaced:
+            raise ValueError(f"'{find_value}' not found in sheet")
+        
+        wb.save(filepath)
+        logger.info(f"Replaced '{find_value}' with '{replace_value}' in {len(replaced)} cells")
+        
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "find_value": find_value,
+            "replace_value": replace_value,
+            "replaced_count": len(replaced),
+            "replacements": replaced,
+            "message": f"Replaced '{find_value}' with '{replace_value}' in {len(replaced)} cells"
+        }
+    
+    async def bulk_find_replace(
+        self,
+        file_id: str,
+        sheet_name: str,
+        find_value: str,
+        replace_value: str,
+        column: Optional[str] = None,
+        match_case: bool = False
+    ) -> Dict:
+        """
+        Tool 22: Bulk find and replace ALL occurrences
+        
+        Use for: "Replace all Ali with Taha", "Change every occurrence of X to Y"
+        
+        Parameters:
+        - find_value: The text to find
+        - replace_value: The text to replace with
+        - column: Optional - limit search to specific column
+        - match_case: Whether to match case (default: False)
+        """
+        
+        # Use find_replace with first_only=False
+        return await self.find_replace(
+            file_id=file_id,
+            sheet_name=sheet_name,
+            find_value=find_value,
+            replace_value=replace_value,
+            column=column,
+            match_case=match_case,
+            first_only=False
+        )
 
     # ==================== HELPER METHODS ====================
     
