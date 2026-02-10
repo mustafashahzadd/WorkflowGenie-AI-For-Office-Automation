@@ -159,15 +159,26 @@ async def download_file(
     # Get file from database
     excel_file = db.query(ExcelFile).filter(ExcelFile.id == file_id).first()
     
-    if not excel_file:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found in database"
-        )
+    if excel_file:
+        # File found in database
+        file_path = Path(excel_file.filepath)
+        filename = excel_file.filename
+    else:
+        # Fallback: search by file_id pattern in data directory
+        data_dir = Path("data/excel_files")
+        matching_files = list(data_dir.glob(f"{file_id}_*"))
+        
+        if not matching_files:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found"
+            )
+        
+        file_path = matching_files[0]
+        # Extract filename from path (remove file_id prefix)
+        filename = file_path.name.replace(f"{file_id}_", "")
     
     # Check if file exists on disk
-    file_path = Path(excel_file.filepath)
-    
     if not file_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -177,10 +188,10 @@ async def download_file(
     # Return file for download
     return FileResponse(
         path=str(file_path),
-        filename=excel_file.filename,
+        filename=filename,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": f'attachment; filename="{excel_file.filename}"'
+            "Content-Disposition": f'attachment; filename="{filename}"'
         }
     )
 

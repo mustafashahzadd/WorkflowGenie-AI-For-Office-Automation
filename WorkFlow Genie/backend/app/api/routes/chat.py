@@ -160,7 +160,7 @@ async def send_message(
         # STEP 5: DETECT INTENT (Excel Operation or General Chat)
         # ════════════════════════════════════════════════════════════════
         
-        is_excel_operation = llm_service.detect_excel_intent(request_data.message)
+        is_excel_operation = llm_service.detect_excel_intent(request_data.message, request_data.file_id)
         
         if is_excel_operation:
             logger.info("🔧 Detected Excel operation intent")
@@ -467,10 +467,12 @@ async def _handle_excel_operation(
             db.refresh(operation)
             
             try:
-                # Execute the MCP tool
+                # Execute the MCP tool (pass session_id and db for tools that need database access)
                 result = await mcp_service.execute_tool(
                     tool_name=step["tool"],
-                    parameters=step["parameters"]
+                    parameters=step["parameters"],
+                    session_id=session_id,
+                    db=db
                 )
                 
                 # Update operation log
