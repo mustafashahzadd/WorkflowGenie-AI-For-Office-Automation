@@ -13,9 +13,11 @@ import re
 from loguru import logger
 from datetime import datetime
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.models import Session as ChatSession, Message, Operation
 from app.services.llm_service import llm_service
+from app.services.claude_mcp_service import claude_mcp_service
 from app.services.mcp_service import mcp_service
 
 router = APIRouter()
@@ -28,6 +30,7 @@ class MessageRequest(BaseModel):
     message: str = Field(..., description="User's message in natural language", example="Update John Smith's salary to 62000")
     file_id: Optional[str] = Field(None, description="Excel file ID to operate on (UUID format)", example="3cf05b87-ce48-4dd7-b463-547d911ffb")
     sheet_name: str = Field(default="HR", description="Sheet name within the Excel file", example="HR")
+    provider: Optional[str] = Field(None, description="LLM provider override: openai or claude", example="claude")
 
 class MessageResponse(BaseModel):
     """Response model for message"""
@@ -155,6 +158,9 @@ async def send_message(
         ]
         
         logger.info(f"📚 Loaded {len(conversation_history)} messages from history")
+
+        provider = _resolve_provider(request_data.provider)
+        logger.info(f"🤖 Using provider: {provider}")
         
         # ════════════════════════════════════════════════════════════════
         # STEP 5: DETECT INTENT (Excel Operation or General Chat)
@@ -241,6 +247,7 @@ Which would you prefer?"""
                 user_message=request_data.message,
                 file_id=file_id,
                 sheet_name=request_data.sheet_name,
+                provider=provider,
                 conversation_history=conversation_history,
                 session_summary=chat_session.summary,
                 db=db,
@@ -258,7 +265,8 @@ Which would you prefer?"""
             
             response = llm_service.generate_response(
                 messages=conversation_history,
-                session_summary=chat_session.summary
+                session_summary=chat_session.summary,
+                provider=provider
             )
             
             assistant_message = Message(
@@ -280,7 +288,8 @@ Which would you prefer?"""
             if message_count % 10 == 0:
                 logger.info("📝 Updating session summary...")
                 summary = llm_service.generate_session_summary(
-                    [{"role": m.role, "content": m.content} for m in recent_messages]
+                    [{"role": m.role, "content": m.content} for m in recent_messages],
+                    provider=provider
                 )
                 chat_session.summary = summary
                 logger.info(f"✅ Session summary updated: {summary[:100]}...")
@@ -291,7 +300,7 @@ Which would you prefer?"""
                 session_id=chat_session.id,
                 response=response,
                 operations=[],
-                context={"conversation": True}
+                context={"conversation": True, "provider": provider}
             )
     
     except HTTPException:
@@ -357,6 +366,7 @@ async def _handle_excel_operation(
     user_message: str,
     file_id: str,
     sheet_name: str,
+    provider: str,
     conversation_history: List[Dict],
     session_summary: Optional[str],
     db: Session,
@@ -375,12 +385,14 @@ async def _handle_excel_operation(
     """
     
     try:
+        tool_service = claude_mcp_service if provider == "claude" else mcp_service
+
         # ═══════════════════════════════════════════════════════════════
         # STEP 1: GATHER CONTEXT
         # ═══════════════════════════════════════════════════════════════
         
         # Get available files
-        files = await mcp_service.list_files()
+        files = await tool_service.list_files()
         available_files = [f"{f['filename']} ({f['file_id']})" for f in files]
         
         # Get recent operations for context
@@ -403,7 +415,7 @@ async def _handle_excel_operation(
         column_headers = []
         if file_id:
             try:
-                column_headers = await mcp_service.get_column_headers(file_id, sheet_name)
+                column_headers = await tool_service.get_column_headers(file_id, sheet_name)
                 logger.info(f"📊 Column headers: {column_headers}")
             except Exception as e:
                 logger.warning(f"Could not get column headers: {e}")
@@ -433,7 +445,8 @@ async def _handle_excel_operation(
                 "available_files": available_files,
                 "recent_operations": recent_operations,
                 "column_headers": column_headers
-            }
+            },
+            provider=provider
         )
         
         logger.info(f"📝 Plan created with {len(plan['steps'])} step(s)")
@@ -468,7 +481,7 @@ async def _handle_excel_operation(
             
             try:
                 # Execute the MCP tool (pass session_id and db for tools that need database access)
-                result = await mcp_service.execute_tool(
+                result = await tool_service.execute_tool(
                     tool_name=step["tool"],
                     parameters=step["parameters"],
                     session_id=session_id,
@@ -538,10 +551,17 @@ async def _handle_excel_operation(
         # ═══════════════════════════════════════════════════════════════
         
         logger.info("💬 Formatting response...")
+
+        executed_step_numbers = {op.get("step") for op in operation_results}
+        executed_steps = [
+            step for step in plan.get("steps", [])
+            if step.get("step") in executed_step_numbers
+        ]
         
         response_text = llm_service.format_operation_results(
-            steps=plan.get('steps', []),
-            results=operation_results
+            steps=executed_steps,
+            results=operation_results,
+            provider=provider
         )
         
         # ═══════════════════════════════════════════════════════════════
@@ -555,7 +575,8 @@ async def _handle_excel_operation(
             meta_data=json.dumps({
                 "operations": operation_results,
                 "file_id": file_id,
-                "sheet_name": sheet_name
+                "sheet_name": sheet_name,
+                "provider": provider
             })
         )
         db.add(assistant_message)
@@ -574,7 +595,7 @@ async def _handle_excel_operation(
             logger.info("📝 Updating session summary after 5 operations...")
             chat_session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
             if chat_session:
-                summary = llm_service.generate_session_summary(conversation_history, [])
+                summary = llm_service.generate_session_summary(conversation_history, [], provider=provider)
                 chat_session.summary = summary
                 db.commit()
                 logger.info(f"✅ Session summary updated: {summary[:100]}...")
@@ -599,6 +620,7 @@ async def _handle_excel_operation(
             context={
                 "file_id": file_id,
                 "sheet_name": sheet_name,
+                "provider": provider,
                 "total_operations": len(operation_results),
                 "successful": len([op for op in operation_results if op["status"] == "completed"])
             }
@@ -621,7 +643,7 @@ async def _handle_excel_operation(
             session_id=session_id,
             response=error_message,
             operations=[],
-            context={"error": True}
+            context={"error": True, "provider": provider}
         )
 
 # ==================== HELPER FUNCTIONS ====================
@@ -641,3 +663,12 @@ def _is_forget_command(message: str) -> bool:
     
     message_lower = message.lower().strip()
     return any(pattern in message_lower for pattern in forget_patterns)
+
+
+def _resolve_provider(provider: Optional[str]) -> str:
+    """Resolve provider from request override or app default."""
+
+    resolved_provider = (provider or settings.LLM_PROVIDER or "openai").strip().lower()
+    if resolved_provider not in {"openai", "claude"}:
+        raise HTTPException(status_code=400, detail="Invalid provider. Use 'openai' or 'claude'.")
+    return resolved_provider

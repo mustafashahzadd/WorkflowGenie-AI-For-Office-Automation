@@ -10,6 +10,7 @@ import pandas as pd
 from pathlib import Path
 import uuid
 import time
+from datetime import date, datetime
 from typing import Dict, Any, List, Optional, Tuple
 from loguru import logger
 
@@ -37,12 +38,47 @@ class MCPService:
         start_time = time.time()
         
         # Normalize parameter names (handle LLM variations)
-        if 'range' in parameters and 'start_cell' not in parameters:
-            parameters['start_cell'] = parameters.pop('range').split(':')[0]  # Take first cell if range like "A1:C1"
+        if 'range' in parameters:
+            range_value = parameters.get('range')
+
+            range_notation_tools = {
+                "read_range",
+                "conditional_formatting",
+                "set_cell_style",
+                "add_data_validation",
+                "set_print_area",
+                "create_named_range",
+                "fill_down",
+                "set_number_format",
+                "create_excel_table"
+            }
+
+            if tool_name in range_notation_tools and 'range_notation' not in parameters:
+                parameters['range_notation'] = range_value
+
+            if tool_name == "write_range" and 'start_cell' not in parameters and isinstance(range_value, str):
+                parameters['start_cell'] = range_value.split(':')[0]
+
+            parameters.pop('range', None)
         if 'cell' in parameters and 'cell_address' not in parameters:
             parameters['cell_address'] = parameters.pop('cell')
         if 'name' in parameters and 'person_name' not in parameters and 'filename' not in parameters:
             parameters['person_name'] = parameters.pop('name')
+        if 'row' in parameters and 'row_index' not in parameters:
+            parameters['row_index'] = parameters.pop('row')
+        if 'count' in parameters and 'amount' not in parameters:
+            parameters['amount'] = parameters.pop('count')
+        if 'column_name' in parameters and 'column' not in parameters:
+            parameters['column'] = parameters.pop('column_name')
+        if 'mappings' in parameters and 'rename_map' not in parameters:
+            parameters['rename_map'] = parameters.pop('mappings')
+        if 'fill_value' in parameters and 'value' not in parameters:
+            parameters['value'] = parameters.pop('fill_value')
+        if 'case' in parameters and 'case_style' not in parameters:
+            parameters['case_style'] = parameters.pop('case')
+
+        if tool_name == "delete_columns" and isinstance(parameters.get('columns'), str):
+            parameters['columns'] = [parameters['columns']]
         
         try:
             if tool_name == "create_workbook":
@@ -148,6 +184,40 @@ class MCPService:
                 result = await self.copy_sheet(**parameters)
             elif tool_name == "move_sheet":
                 result = await self.move_sheet(**parameters)
+            # DATA ENGINEERING TOOLS
+            elif tool_name == "join_sheets":
+                result = await self.join_sheets(**parameters)
+            elif tool_name == "append_sheets":
+                result = await self.append_sheets(**parameters)
+            elif tool_name == "unpivot_columns":
+                result = await self.unpivot_columns(**parameters)
+            elif tool_name == "create_excel_table":
+                result = await self.create_excel_table(**parameters)
+            elif tool_name == "fill_formula_down":
+                result = await self.fill_formula_down(**parameters)
+            elif tool_name == "set_number_format":
+                result = await self.set_number_format(**parameters)
+            elif tool_name == "standardize_dates":
+                result = await self.standardize_dates(**parameters)
+            elif tool_name == "validate_schema":
+                result = await self.validate_schema(**parameters)
+            # STRUCTURE & CLEANING TOOLS
+            elif tool_name == "insert_rows":
+                result = await self.insert_rows(**parameters)
+            elif tool_name == "delete_rows_by_index":
+                result = await self.delete_rows_by_index(**parameters)
+            elif tool_name == "insert_columns":
+                result = await self.insert_columns(**parameters)
+            elif tool_name == "delete_columns":
+                result = await self.delete_columns(**parameters)
+            elif tool_name == "rename_columns":
+                result = await self.rename_columns(**parameters)
+            elif tool_name == "fill_missing_values":
+                result = await self.fill_missing_values(**parameters)
+            elif tool_name == "standardize_text_case":
+                result = await self.standardize_text_case(**parameters)
+            elif tool_name == "trim_whitespace":
+                result = await self.trim_whitespace(**parameters)
             # ADVANCED TOOLS
             elif tool_name == "create_named_range":
                 result = await self.create_named_range(**parameters)
@@ -3104,6 +3174,983 @@ class MCPService:
             "message": f"Moved sheet '{sheet_name}' to position {position}"
         }
 
+    # ==================== DATA ENGINEERING TOOLS ====================
+
+    async def join_sheets(
+        self,
+        file_id: str,
+        left_sheet: str,
+        right_sheet: str,
+        left_key: str,
+        right_key: Optional[str] = None,
+        join_type: str = "left",
+        target_sheet: str = "JoinedData"
+    ) -> Dict:
+        """Join two sheets using SQL-style merge operations."""
+
+        join_type = join_type.lower().strip()
+        if join_type not in {"left", "right", "inner", "outer"}:
+            raise ValueError("join_type must be one of: left, right, inner, outer")
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if left_sheet not in wb.sheetnames:
+            raise ValueError(f"Sheet '{left_sheet}' not found")
+        if right_sheet not in wb.sheetnames:
+            raise ValueError(f"Sheet '{right_sheet}' not found")
+
+        left_df = self._sheet_to_dataframe(wb[left_sheet])
+        right_df = self._sheet_to_dataframe(wb[right_sheet])
+
+        if left_key not in left_df.columns:
+            raise ValueError(f"left_key '{left_key}' not found in sheet '{left_sheet}'")
+
+        actual_right_key = right_key or left_key
+        if actual_right_key not in right_df.columns:
+            raise ValueError(f"right_key '{actual_right_key}' not found in sheet '{right_sheet}'")
+
+        joined_df = pd.merge(
+            left_df,
+            right_df,
+            how=join_type,
+            left_on=left_key,
+            right_on=actual_right_key,
+            suffixes=("_left", "_right")
+        )
+
+        target_sheet = (target_sheet or "JoinedData")[:31]
+        self._write_dataframe_to_sheet(wb, target_sheet, joined_df)
+        wb.save(filepath)
+
+        logger.info(
+            f"Joined '{left_sheet}' and '{right_sheet}' -> '{target_sheet}' with {len(joined_df)} rows"
+        )
+
+        return {
+            "file_id": file_id,
+            "left_sheet": left_sheet,
+            "right_sheet": right_sheet,
+            "left_key": left_key,
+            "right_key": actual_right_key,
+            "join_type": join_type,
+            "target_sheet": target_sheet,
+            "rows": int(len(joined_df)),
+            "columns": [str(c) for c in joined_df.columns.tolist()],
+            "message": f"Joined '{left_sheet}' and '{right_sheet}' into '{target_sheet}' ({len(joined_df)} rows)"
+        }
+
+    async def append_sheets(
+        self,
+        file_id: str,
+        source_sheets: List[str],
+        target_sheet: str = "AppendedData",
+        deduplicate: bool = False
+    ) -> Dict:
+        """Append rows from multiple sheets into one consolidated sheet."""
+
+        if not source_sheets:
+            raise ValueError("source_sheets must contain at least one sheet name")
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        missing_sheets = [name for name in source_sheets if name not in wb.sheetnames]
+        if missing_sheets:
+            raise ValueError(f"Sheet(s) not found: {missing_sheets}")
+
+        frames: List[pd.DataFrame] = []
+        original_rows = 0
+
+        for sheet in source_sheets:
+            df = self._sheet_to_dataframe(wb[sheet])
+            original_rows += len(df)
+            df = df.copy()
+            df["_source_sheet"] = sheet
+            frames.append(df)
+
+        combined_df = pd.concat(frames, ignore_index=True, sort=False)
+        removed_duplicates = 0
+        if deduplicate and not combined_df.empty:
+            before = len(combined_df)
+            combined_df = combined_df.drop_duplicates(ignore_index=True)
+            removed_duplicates = before - len(combined_df)
+
+        target_sheet = (target_sheet or "AppendedData")[:31]
+        self._write_dataframe_to_sheet(wb, target_sheet, combined_df)
+        wb.save(filepath)
+
+        logger.info(f"Appended {len(source_sheets)} sheets into '{target_sheet}'")
+
+        return {
+            "file_id": file_id,
+            "source_sheets": source_sheets,
+            "target_sheet": target_sheet,
+            "original_rows": int(original_rows),
+            "final_rows": int(len(combined_df)),
+            "duplicates_removed": int(removed_duplicates),
+            "message": f"Appended {len(source_sheets)} sheets into '{target_sheet}' ({len(combined_df)} rows)"
+        }
+
+    async def unpivot_columns(
+        self,
+        file_id: str,
+        sheet_name: str,
+        id_columns: Optional[List[str]] = None,
+        value_columns: Optional[List[str]] = None,
+        variable_column: str = "Attribute",
+        value_column: str = "Value",
+        target_sheet: Optional[str] = None
+    ) -> Dict:
+        """Convert wide-format columns into long-format rows (melt/unpivot)."""
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        df = self._sheet_to_dataframe(wb[sheet_name])
+        if df.empty and len(df.columns) == 0:
+            raise ValueError(f"Sheet '{sheet_name}' does not contain tabular data")
+
+        id_columns = id_columns or []
+        for col in id_columns:
+            if col not in df.columns:
+                raise ValueError(f"id column '{col}' not found")
+
+        if value_columns is None:
+            value_columns = [c for c in df.columns if c not in id_columns]
+
+        for col in value_columns:
+            if col not in df.columns:
+                raise ValueError(f"value column '{col}' not found")
+
+        unpivoted_df = df.melt(
+            id_vars=id_columns,
+            value_vars=value_columns,
+            var_name=variable_column,
+            value_name=value_column
+        )
+
+        target_sheet_name = target_sheet or f"Unpivot_{sheet_name}"
+        target_sheet_name = target_sheet_name[:31]
+
+        self._write_dataframe_to_sheet(wb, target_sheet_name, unpivoted_df)
+        wb.save(filepath)
+
+        logger.info(f"Unpivoted '{sheet_name}' -> '{target_sheet_name}' with {len(unpivoted_df)} rows")
+
+        return {
+            "file_id": file_id,
+            "source_sheet": sheet_name,
+            "target_sheet": target_sheet_name,
+            "id_columns": id_columns,
+            "value_columns": value_columns,
+            "rows_generated": int(len(unpivoted_df)),
+            "message": f"Unpivoted '{sheet_name}' into '{target_sheet_name}' ({len(unpivoted_df)} rows)"
+        }
+
+    async def create_excel_table(
+        self,
+        file_id: str,
+        sheet_name: str,
+        range_notation: str,
+        table_name: Optional[str] = None,
+        style_name: str = "TableStyleMedium2"
+    ) -> Dict:
+        """Create a native Excel table object from a range."""
+        from openpyxl.worksheet.table import Table, TableStyleInfo
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+        if ":" not in range_notation:
+            raise ValueError("range_notation must be in format like 'A1:D100'")
+
+        base_name = table_name or f"Table_{sheet_name}"
+        safe_name = "".join(ch if ch.isalnum() else "_" for ch in base_name)
+        if not safe_name:
+            safe_name = "Table1"
+        if safe_name[0].isdigit():
+            safe_name = f"T_{safe_name}"
+
+        existing_names = set()
+        for sheet in wb.worksheets:
+            existing_names.update(sheet.tables.keys())
+
+        unique_name = safe_name
+        suffix = 1
+        while unique_name in existing_names:
+            unique_name = f"{safe_name}_{suffix}"
+            suffix += 1
+
+        table = Table(displayName=unique_name, ref=range_notation)
+        table.tableStyleInfo = TableStyleInfo(
+            name=style_name,
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=True,
+            showColumnStripes=False
+        )
+
+        ws.add_table(table)
+        wb.save(filepath)
+
+        logger.info(f"Created table '{unique_name}' on {sheet_name}!{range_notation}")
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "table_name": unique_name,
+            "range": range_notation,
+            "style": style_name,
+            "message": f"Created Excel table '{unique_name}' in range {range_notation}"
+        }
+
+    async def fill_formula_down(
+        self,
+        file_id: str,
+        sheet_name: str,
+        start_cell: str,
+        end_row: Optional[int] = None
+    ) -> Dict:
+        """Copy a formula from start_cell down to a target row using relative references."""
+        from openpyxl.formula.translate import Translator
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+        start_row, start_col = self._parse_cell_address(start_cell)
+        base_formula = ws[start_cell].value
+
+        if not isinstance(base_formula, str) or not base_formula.startswith("="):
+            raise ValueError(f"Cell '{start_cell}' must contain an Excel formula")
+
+        target_end_row = end_row or ws.max_row
+        if target_end_row <= start_row:
+            return {
+                "file_id": file_id,
+                "sheet_name": sheet_name,
+                "start_cell": start_cell,
+                "rows_filled": 0,
+                "message": "No rows were filled because end_row is not below start_cell"
+            }
+
+        col_letter = get_column_letter(start_col)
+        rows_filled = 0
+        for row_idx in range(start_row + 1, target_end_row + 1):
+            target_cell = f"{col_letter}{row_idx}"
+            translated_formula = Translator(base_formula, origin=start_cell).translate_formula(target_cell)
+            ws[target_cell] = translated_formula
+            rows_filled += 1
+
+        wb.save(filepath)
+
+        logger.info(f"Filled formula from {start_cell} down to row {target_end_row}")
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "start_cell": start_cell,
+            "end_row": target_end_row,
+            "rows_filled": rows_filled,
+            "message": f"Filled formula from {start_cell} down {rows_filled} row(s)"
+        }
+
+    async def set_number_format(
+        self,
+        file_id: str,
+        sheet_name: str,
+        range_notation: str,
+        number_format: str
+    ) -> Dict:
+        """Apply an Excel number format string to a cell/range."""
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+
+        if ":" in range_notation:
+            start_cell_addr, end_cell_addr = range_notation.split(":")
+            start_row, start_col = self._parse_cell_address(start_cell_addr)
+            end_row, end_col = self._parse_cell_address(end_cell_addr)
+        else:
+            start_row, start_col = self._parse_cell_address(range_notation)
+            end_row, end_col = start_row, start_col
+
+        formatted_cells = 0
+        for row_idx in range(start_row, end_row + 1):
+            for col_idx in range(start_col, end_col + 1):
+                ws.cell(row=row_idx, column=col_idx).number_format = number_format
+                formatted_cells += 1
+
+        wb.save(filepath)
+
+        logger.info(f"Applied number format '{number_format}' to {formatted_cells} cells")
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "range": range_notation,
+            "number_format": number_format,
+            "formatted_cells": formatted_cells,
+            "message": f"Applied number format '{number_format}' to {formatted_cells} cell(s)"
+        }
+
+    async def standardize_dates(
+        self,
+        file_id: str,
+        sheet_name: str,
+        column: str,
+        output_format: str = "YYYY-MM-DD",
+        target_column: Optional[str] = None,
+        day_first: bool = False
+    ) -> Dict:
+        """Normalize mixed date values in a column to a consistent output format."""
+
+        format_map = {
+            "YYYY-MM-DD": "%Y-%m-%d",
+            "DD-MM-YYYY": "%d-%m-%Y",
+            "MM-DD-YYYY": "%m-%d-%Y",
+            "YYYY/MM/DD": "%Y/%m/%d",
+            "DD/MM/YYYY": "%d/%m/%Y",
+            "MM/DD/YYYY": "%m/%d/%Y"
+        }
+
+        if output_format not in format_map:
+            raise ValueError(f"Unsupported output_format '{output_format}'. Supported: {list(format_map.keys())}")
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+        header_row = self._find_header_row(ws)
+
+        headers = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header = ws.cell(row=header_row, column=col_idx).value
+            if header:
+                headers[str(header).strip().lower()] = col_idx
+
+        source_col = headers.get(column.lower())
+        if not source_col:
+            raise ValueError(f"Column '{column}' not found")
+
+        target_col = source_col
+        if target_column and target_column.strip().lower() != column.strip().lower():
+            target_col = ws.max_column + 1
+            ws.cell(row=header_row, column=target_col, value=target_column)
+
+        converted = 0
+        skipped = 0
+        strftime_format = format_map[output_format]
+
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            raw_value = ws.cell(row=row_idx, column=source_col).value
+
+            if raw_value is None or raw_value == "":
+                continue
+
+            parsed = pd.to_datetime(raw_value, errors="coerce", dayfirst=day_first)
+            if pd.isna(parsed):
+                skipped += 1
+                continue
+
+            ws.cell(row=row_idx, column=target_col, value=parsed.strftime(strftime_format))
+            converted += 1
+
+        wb.save(filepath)
+
+        logger.info(f"Standardized {converted} date values in '{column}'")
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "source_column": column,
+            "target_column": target_column or column,
+            "output_format": output_format,
+            "converted": converted,
+            "skipped": skipped,
+            "message": f"Standardized {converted} date values in '{column}' ({skipped} skipped)"
+        }
+
+    async def validate_schema(
+        self,
+        file_id: str,
+        sheet_name: str,
+        required_columns: List[str],
+        column_types: Optional[Dict[str, str]] = None,
+        allow_extra_columns: bool = True
+    ) -> Dict:
+        """Validate required columns and optional data types for a sheet."""
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+        header_row = self._find_header_row(ws)
+
+        headers = []
+        header_map = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header = ws.cell(row=header_row, column=col_idx).value
+            if header:
+                header_name = str(header).strip()
+                headers.append(header_name)
+                header_map[header_name.lower()] = col_idx
+
+        required_lower = {str(col).strip().lower() for col in required_columns}
+        missing_columns = [col for col in required_columns if str(col).strip().lower() not in header_map]
+
+        extra_columns = []
+        if not allow_extra_columns:
+            extra_columns = [h for h in headers if h.strip().lower() not in required_lower]
+
+        type_validation = {}
+        if column_types:
+            for col_name, expected_type in column_types.items():
+                col_idx = header_map.get(str(col_name).strip().lower())
+                if not col_idx:
+                    type_validation[col_name] = {
+                        "expected_type": expected_type,
+                        "checked_values": 0,
+                        "invalid_count": 0,
+                        "status": "column_missing"
+                    }
+                    continue
+
+                checked_values = 0
+                invalid_count = 0
+                sample_invalid = []
+
+                for row_idx in range(header_row + 1, ws.max_row + 1):
+                    value = ws.cell(row=row_idx, column=col_idx).value
+                    if value is None or value == "":
+                        continue
+
+                    checked_values += 1
+                    if not self._is_value_of_type(value, expected_type):
+                        invalid_count += 1
+                        if len(sample_invalid) < 5:
+                            sample_invalid.append({"row": row_idx, "value": value})
+
+                type_validation[col_name] = {
+                    "expected_type": expected_type,
+                    "checked_values": checked_values,
+                    "invalid_count": invalid_count,
+                    "sample_invalid": sample_invalid,
+                    "status": "ok" if invalid_count == 0 else "type_mismatch"
+                }
+
+        has_type_issues = any(
+            result.get("invalid_count", 0) > 0 or result.get("status") == "column_missing"
+            for result in type_validation.values()
+        )
+
+        schema_valid = (len(missing_columns) == 0) and (allow_extra_columns or len(extra_columns) == 0) and (not has_type_issues)
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "schema_valid": schema_valid,
+            "headers": headers,
+            "required_columns": required_columns,
+            "missing_columns": missing_columns,
+            "extra_columns": extra_columns,
+            "type_validation": type_validation,
+            "message": "Schema validation passed" if schema_valid else "Schema validation failed"
+        }
+
+    async def insert_rows(
+        self,
+        file_id: str,
+        sheet_name: str,
+        row_index: int,
+        amount: int = 1
+    ) -> Dict:
+        """Insert one or more blank rows at the specified row index."""
+
+        if row_index < 1:
+            raise ValueError("row_index must be >= 1")
+        if amount < 1:
+            raise ValueError("amount must be >= 1")
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+        ws.insert_rows(row_index, amount)
+        wb.save(filepath)
+
+        logger.info(f"Inserted {amount} row(s) at index {row_index} in '{sheet_name}'")
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "row_index": row_index,
+            "rows_inserted": amount,
+            "message": f"Inserted {amount} row(s) at row {row_index}"
+        }
+
+    async def delete_rows_by_index(
+        self,
+        file_id: str,
+        sheet_name: str,
+        row_index: int,
+        amount: int = 1
+    ) -> Dict:
+        """Delete one or more rows by 1-based row index."""
+
+        if row_index < 1:
+            raise ValueError("row_index must be >= 1")
+        if amount < 1:
+            raise ValueError("amount must be >= 1")
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+        if row_index > ws.max_row:
+            raise ValueError(f"row_index {row_index} is beyond max row {ws.max_row}")
+
+        actual_amount = min(amount, ws.max_row - row_index + 1)
+        ws.delete_rows(row_index, actual_amount)
+        wb.save(filepath)
+
+        logger.info(f"Deleted {actual_amount} row(s) from index {row_index} in '{sheet_name}'")
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "row_index": row_index,
+            "rows_deleted": actual_amount,
+            "message": f"Deleted {actual_amount} row(s) starting at row {row_index}"
+        }
+
+    async def insert_columns(
+        self,
+        file_id: str,
+        sheet_name: str,
+        column: Any,
+        amount: int = 1
+    ) -> Dict:
+        """Insert one or more columns before a target column index/letter/header."""
+
+        if amount < 1:
+            raise ValueError("amount must be >= 1")
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+        header_row = self._find_header_row(ws)
+        column_index = self._resolve_column_index(ws, column, header_row=header_row, allow_end=True)
+
+        ws.insert_cols(column_index, amount)
+        wb.save(filepath)
+
+        logger.info(f"Inserted {amount} column(s) at index {column_index} in '{sheet_name}'")
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "column": column,
+            "column_index": column_index,
+            "columns_inserted": amount,
+            "message": f"Inserted {amount} column(s) at column index {column_index}"
+        }
+
+    async def delete_columns(
+        self,
+        file_id: str,
+        sheet_name: str,
+        columns: List[Any]
+    ) -> Dict:
+        """Delete one or more columns using index, letter, or header name references."""
+
+        if isinstance(columns, (str, int)):
+            columns = [columns]
+        if not columns:
+            raise ValueError("columns must contain at least one column reference")
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+        header_row = self._find_header_row(ws)
+
+        resolved_columns: List[Dict[str, Any]] = []
+        resolved_indexes: List[int] = []
+
+        for column_ref in columns:
+            column_index = self._resolve_column_index(ws, column_ref, header_row=header_row)
+            resolved_indexes.append(column_index)
+            resolved_columns.append({"reference": column_ref, "column_index": column_index})
+
+        unique_indexes = sorted(set(resolved_indexes), reverse=True)
+        for column_index in unique_indexes:
+            ws.delete_cols(column_index, 1)
+
+        wb.save(filepath)
+
+        logger.info(f"Deleted {len(unique_indexes)} column(s) in '{sheet_name}'")
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "columns_deleted": len(unique_indexes),
+            "resolved_columns": resolved_columns,
+            "message": f"Deleted {len(unique_indexes)} column(s) from '{sheet_name}'"
+        }
+
+    async def rename_columns(
+        self,
+        file_id: str,
+        sheet_name: str,
+        rename_map: Dict[str, str],
+        case_sensitive: bool = False
+    ) -> Dict:
+        """Rename column headers in place using a mapping of old->new names."""
+
+        if not rename_map:
+            raise ValueError("rename_map must contain at least one mapping")
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+        header_row = self._find_header_row(ws)
+
+        header_lookup: Dict[str, int] = {}
+        for col_idx in range(1, ws.max_column + 1):
+            header_value = ws.cell(row=header_row, column=col_idx).value
+            if header_value is None:
+                continue
+
+            header_text = str(header_value).strip()
+            key = header_text if case_sensitive else header_text.lower()
+            header_lookup[key] = col_idx
+
+        renamed: List[Dict[str, Any]] = []
+        missing: List[str] = []
+
+        for old_name, new_name in rename_map.items():
+            old_key = str(old_name).strip()
+            lookup_key = old_key if case_sensitive else old_key.lower()
+
+            col_idx = header_lookup.get(lookup_key)
+            if not col_idx:
+                missing.append(old_name)
+                continue
+
+            ws.cell(row=header_row, column=col_idx, value=str(new_name))
+            renamed.append({"old": old_name, "new": str(new_name), "column_index": col_idx})
+
+        wb.save(filepath)
+
+        logger.info(f"Renamed {len(renamed)} column(s) in '{sheet_name}'")
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "renamed": renamed,
+            "missing": missing,
+            "message": f"Renamed {len(renamed)} column(s){' with some missing columns' if missing else ''}"
+        }
+
+    async def fill_missing_values(
+        self,
+        file_id: str,
+        sheet_name: str,
+        column: str,
+        strategy: str = "constant",
+        value: Optional[Any] = None,
+        target_column: Optional[str] = None
+    ) -> Dict:
+        """Fill empty values in a column using constant/statistical/forward-fill strategies."""
+
+        strategy_key = str(strategy or "constant").strip().lower().replace(" ", "_")
+        strategy_aliases = {
+            "fixed": "constant",
+            "value": "constant",
+            "ffill": "forward_fill"
+        }
+        strategy_key = strategy_aliases.get(strategy_key, strategy_key)
+
+        valid_strategies = {"constant", "mean", "median", "mode", "forward_fill"}
+        if strategy_key not in valid_strategies:
+            raise ValueError(f"strategy must be one of: {sorted(valid_strategies)}")
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+        header_row = self._find_header_row(ws)
+        source_col_idx = self._resolve_column_index(ws, column, header_row=header_row)
+        source_header = ws.cell(row=header_row, column=source_col_idx).value
+        source_header_name = str(source_header).strip() if source_header is not None else str(column)
+
+        target_col_idx = source_col_idx
+        if target_column and target_column.strip().lower() != source_header_name.lower():
+            target_col_idx = ws.max_column + 1
+            ws.cell(row=header_row, column=target_col_idx, value=target_column)
+
+        fill_value: Any = None
+        non_empty_values = []
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            cell_value = ws.cell(row=row_idx, column=source_col_idx).value
+            if not self._is_empty_cell_value(cell_value):
+                non_empty_values.append(cell_value)
+
+        if strategy_key == "constant":
+            if value is None:
+                raise ValueError("value is required when strategy='constant'")
+            fill_value = value
+        elif strategy_key in {"mean", "median"}:
+            numeric_series = pd.to_numeric(pd.Series(non_empty_values), errors="coerce").dropna()
+            if numeric_series.empty:
+                raise ValueError(f"Cannot compute {strategy_key}; column '{column}' has no numeric values")
+            fill_value = float(numeric_series.mean()) if strategy_key == "mean" else float(numeric_series.median())
+        elif strategy_key == "mode":
+            mode_series = pd.Series(non_empty_values).dropna().mode()
+            if mode_series.empty:
+                raise ValueError(f"Cannot compute mode; column '{column}' has no values")
+            fill_value = mode_series.iloc[0]
+
+        filled_count = 0
+
+        if strategy_key == "forward_fill":
+            last_seen = None
+            for row_idx in range(header_row + 1, ws.max_row + 1):
+                current_value = ws.cell(row=row_idx, column=source_col_idx).value
+
+                if self._is_empty_cell_value(current_value):
+                    if last_seen is not None:
+                        ws.cell(row=row_idx, column=target_col_idx, value=last_seen)
+                        filled_count += 1
+                    elif target_col_idx != source_col_idx:
+                        ws.cell(row=row_idx, column=target_col_idx, value=None)
+                else:
+                    last_seen = current_value
+                    if target_col_idx != source_col_idx:
+                        ws.cell(row=row_idx, column=target_col_idx, value=current_value)
+        else:
+            for row_idx in range(header_row + 1, ws.max_row + 1):
+                current_value = ws.cell(row=row_idx, column=source_col_idx).value
+
+                if self._is_empty_cell_value(current_value):
+                    ws.cell(row=row_idx, column=target_col_idx, value=fill_value)
+                    filled_count += 1
+                elif target_col_idx != source_col_idx:
+                    ws.cell(row=row_idx, column=target_col_idx, value=current_value)
+
+        wb.save(filepath)
+
+        logger.info(
+            f"Filled {filled_count} missing values in '{sheet_name}.{column}' using strategy '{strategy_key}'"
+        )
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "column": column,
+            "target_column": target_column or source_header_name,
+            "strategy": strategy_key,
+            "fill_value": "previous_non_empty" if strategy_key == "forward_fill" else fill_value,
+            "filled_count": filled_count,
+            "message": f"Filled {filled_count} missing value(s) in '{column}' using '{strategy_key}'"
+        }
+
+    async def standardize_text_case(
+        self,
+        file_id: str,
+        sheet_name: str,
+        column: str,
+        case_style: str = "title",
+        target_column: Optional[str] = None
+    ) -> Dict:
+        """Normalize text casing in a column (upper/lower/title/sentence)."""
+
+        style_key = str(case_style or "title").strip().lower()
+        style_aliases = {
+            "proper": "title",
+            "capitalize": "sentence"
+        }
+        style_key = style_aliases.get(style_key, style_key)
+
+        if style_key not in {"upper", "lower", "title", "sentence"}:
+            raise ValueError("case_style must be one of: upper, lower, title, sentence")
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+        header_row = self._find_header_row(ws)
+        source_col_idx = self._resolve_column_index(ws, column, header_row=header_row)
+        source_header = ws.cell(row=header_row, column=source_col_idx).value
+        source_header_name = str(source_header).strip() if source_header is not None else str(column)
+
+        target_col_idx = source_col_idx
+        if target_column and target_column.strip().lower() != source_header_name.lower():
+            target_col_idx = ws.max_column + 1
+            ws.cell(row=header_row, column=target_col_idx, value=target_column)
+
+        processed_text = 0
+        changed_count = 0
+        skipped_non_text = 0
+
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            raw_value = ws.cell(row=row_idx, column=source_col_idx).value
+
+            if self._is_empty_cell_value(raw_value):
+                continue
+
+            if not isinstance(raw_value, str):
+                skipped_non_text += 1
+                if target_col_idx != source_col_idx:
+                    ws.cell(row=row_idx, column=target_col_idx, value=raw_value)
+                continue
+
+            processed_text += 1
+            if style_key == "upper":
+                transformed = raw_value.upper()
+            elif style_key == "lower":
+                transformed = raw_value.lower()
+            elif style_key == "title":
+                transformed = raw_value.title()
+            else:
+                stripped = raw_value.strip()
+                transformed = stripped[:1].upper() + stripped[1:].lower() if stripped else stripped
+
+            if transformed != raw_value:
+                changed_count += 1
+
+            if target_col_idx != source_col_idx or transformed != raw_value:
+                ws.cell(row=row_idx, column=target_col_idx, value=transformed)
+
+        wb.save(filepath)
+
+        logger.info(f"Standardized text case for {processed_text} values in '{sheet_name}.{column}'")
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "column": column,
+            "target_column": target_column or source_header_name,
+            "case_style": style_key,
+            "processed_text": processed_text,
+            "changed_count": changed_count,
+            "skipped_non_text": skipped_non_text,
+            "message": f"Standardized text case in '{column}' ({changed_count} value(s) changed)"
+        }
+
+    async def trim_whitespace(
+        self,
+        file_id: str,
+        sheet_name: str,
+        column: str,
+        target_column: Optional[str] = None,
+        collapse_internal_spaces: bool = False
+    ) -> Dict:
+        """Trim leading/trailing whitespace and optionally collapse repeated inner spaces."""
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+        header_row = self._find_header_row(ws)
+        source_col_idx = self._resolve_column_index(ws, column, header_row=header_row)
+        source_header = ws.cell(row=header_row, column=source_col_idx).value
+        source_header_name = str(source_header).strip() if source_header is not None else str(column)
+
+        target_col_idx = source_col_idx
+        if target_column and target_column.strip().lower() != source_header_name.lower():
+            target_col_idx = ws.max_column + 1
+            ws.cell(row=header_row, column=target_col_idx, value=target_column)
+
+        processed_text = 0
+        trimmed_count = 0
+
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            raw_value = ws.cell(row=row_idx, column=source_col_idx).value
+
+            if self._is_empty_cell_value(raw_value):
+                continue
+
+            if not isinstance(raw_value, str):
+                if target_col_idx != source_col_idx:
+                    ws.cell(row=row_idx, column=target_col_idx, value=raw_value)
+                continue
+
+            processed_text += 1
+            cleaned = raw_value.strip()
+            if collapse_internal_spaces:
+                cleaned = " ".join(cleaned.split())
+
+            if cleaned != raw_value:
+                trimmed_count += 1
+
+            if target_col_idx != source_col_idx or cleaned != raw_value:
+                ws.cell(row=row_idx, column=target_col_idx, value=cleaned)
+
+        wb.save(filepath)
+
+        logger.info(f"Trimmed whitespace in '{sheet_name}.{column}', changed {trimmed_count} values")
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "column": column,
+            "target_column": target_column or source_header_name,
+            "collapse_internal_spaces": collapse_internal_spaces,
+            "processed_text": processed_text,
+            "trimmed_count": trimmed_count,
+            "message": f"Trimmed whitespace in '{column}' ({trimmed_count} value(s) changed)"
+        }
+
     # ==================== ADVANCED TOOLS ====================
 
     async def create_named_range(
@@ -3320,20 +4367,43 @@ class MCPService:
 
         ws = wb[sheet_name]
 
-        start_cell_addr, end_cell_addr = data_range.split(':')
-        start_row, start_col = self._parse_cell_address(start_cell_addr)
-        end_row, end_col = self._parse_cell_address(end_cell_addr)
+        range_parts = [part.strip() for part in str(data_range).split(',') if part.strip()]
+
+        if len(range_parts) == 1:
+            start_row, start_col, end_row, end_col = self._parse_range_address(range_parts[0])
+
+            if end_col <= start_col:
+                raise ValueError(
+                    "Bar chart data_range must include a category column and at least one value column "
+                    "(for example: 'A1:B11' or 'A1:D11')"
+                )
+
+            data = Reference(ws, min_col=start_col + 1, min_row=start_row, max_col=end_col, max_row=end_row)
+            categories = Reference(ws, min_col=start_col, min_row=start_row + 1, max_row=end_row)
+            titles_from_data = True
+        elif len(range_parts) == 2:
+            cat_start_row, cat_start_col, cat_end_row, cat_end_col = self._parse_range_address(range_parts[0])
+            val_start_row, val_start_col, val_end_row, val_end_col = self._parse_range_address(range_parts[1])
+
+            if cat_start_col != cat_end_col:
+                raise ValueError("Category range must be a single column (for example: 'A1:A11')")
+
+            categories_min_row = cat_start_row + 1 if cat_start_row == val_start_row else cat_start_row
+            categories = Reference(ws, min_col=cat_start_col, min_row=categories_min_row, max_row=cat_end_row)
+            data = Reference(ws, min_col=val_start_col, min_row=val_start_row, max_col=val_end_col, max_row=val_end_row)
+            titles_from_data = True
+        else:
+            raise ValueError(
+                "Invalid data_range format. Use a contiguous range like 'A1:D11' or two ranges "
+                "like 'A1:A11,C1:D11'"
+            )
 
         chart = XlBarChart()
         chart.title = title or "Bar Chart"
         chart.type = "col"
         chart.style = 10
 
-        data = Reference(ws, min_col=start_col + 1, min_row=start_row,
-                         max_col=end_col, max_row=end_row)
-        categories = Reference(ws, min_col=start_col, min_row=start_row + 1, max_row=end_row)
-
-        chart.add_data(data, titles_from_data=True)
+        chart.add_data(data, titles_from_data=titles_from_data)
         chart.set_categories(categories)
         chart.shape = 4
 
@@ -3369,19 +4439,42 @@ class MCPService:
 
         ws = wb[sheet_name]
 
-        start_cell_addr, end_cell_addr = data_range.split(':')
-        start_row, start_col = self._parse_cell_address(start_cell_addr)
-        end_row, end_col = self._parse_cell_address(end_cell_addr)
+        range_parts = [part.strip() for part in str(data_range).split(',') if part.strip()]
+
+        if len(range_parts) == 1:
+            start_row, start_col, end_row, end_col = self._parse_range_address(range_parts[0])
+
+            if end_col <= start_col:
+                raise ValueError(
+                    "Line chart data_range must include a category column and at least one value column "
+                    "(for example: 'A1:B11' or 'A1:D11')"
+                )
+
+            data = Reference(ws, min_col=start_col + 1, min_row=start_row, max_col=end_col, max_row=end_row)
+            categories = Reference(ws, min_col=start_col, min_row=start_row + 1, max_row=end_row)
+            titles_from_data = True
+        elif len(range_parts) == 2:
+            cat_start_row, cat_start_col, cat_end_row, cat_end_col = self._parse_range_address(range_parts[0])
+            val_start_row, val_start_col, val_end_row, val_end_col = self._parse_range_address(range_parts[1])
+
+            if cat_start_col != cat_end_col:
+                raise ValueError("Category range must be a single column (for example: 'A1:A11')")
+
+            categories_min_row = cat_start_row + 1 if cat_start_row == val_start_row else cat_start_row
+            categories = Reference(ws, min_col=cat_start_col, min_row=categories_min_row, max_row=cat_end_row)
+            data = Reference(ws, min_col=val_start_col, min_row=val_start_row, max_col=val_end_col, max_row=val_end_row)
+            titles_from_data = True
+        else:
+            raise ValueError(
+                "Invalid data_range format. Use a contiguous range like 'A1:D11' or two ranges "
+                "like 'A1:A11,C1:D11'"
+            )
 
         chart = XlLineChart()
         chart.title = title or "Line Chart"
         chart.style = 10
 
-        data = Reference(ws, min_col=start_col + 1, min_row=start_row,
-                         max_col=end_col, max_row=end_row)
-        categories = Reference(ws, min_col=start_col, min_row=start_row + 1, max_row=end_row)
-
-        chart.add_data(data, titles_from_data=True)
+        chart.add_data(data, titles_from_data=titles_from_data)
         chart.set_categories(categories)
 
         ws.add_chart(chart, position)
@@ -3416,18 +4509,48 @@ class MCPService:
 
         ws = wb[sheet_name]
 
-        start_cell_addr, end_cell_addr = data_range.split(':')
-        start_row, start_col = self._parse_cell_address(start_cell_addr)
-        end_row, end_col = self._parse_cell_address(end_cell_addr)
+        range_parts = [part.strip() for part in str(data_range).split(',') if part.strip()]
+
+        if len(range_parts) == 1:
+            start_row, start_col, end_row, end_col = self._parse_range_address(range_parts[0])
+
+            if end_col <= start_col:
+                raise ValueError(
+                    "Pie chart data_range must include a category column and one value column "
+                    "(for example: 'A1:B11')"
+                )
+
+            categories = Reference(ws, min_col=start_col, min_row=start_row + 1, max_row=end_row)
+            data = Reference(ws, min_col=start_col + 1, min_row=start_row, max_row=end_row)
+            titles_from_data = True
+        elif len(range_parts) == 2:
+            cat_start_row, cat_start_col, cat_end_row, cat_end_col = self._parse_range_address(range_parts[0])
+            val_start_row, val_start_col, val_end_row, val_end_col = self._parse_range_address(range_parts[1])
+
+            if cat_start_col != cat_end_col:
+                raise ValueError("Category range must be a single column (for example: 'A1:A11')")
+
+            categories_min_row = cat_start_row + 1 if cat_start_row == val_start_row else cat_start_row
+            categories = Reference(ws, min_col=cat_start_col, min_row=categories_min_row, max_row=cat_end_row)
+            data = Reference(ws, min_col=val_start_col, min_row=val_start_row, max_row=val_end_row)
+            titles_from_data = True
+
+            if val_end_col > val_start_col:
+                logger.warning(
+                    "Pie chart received multiple value columns in data_range '{}'; using the first value column only.",
+                    data_range
+                )
+        else:
+            raise ValueError(
+                "Invalid data_range format. Use a contiguous range like 'A1:B11' or two ranges "
+                "like 'A1:A11,C1:C11'"
+            )
 
         chart = XlPieChart()
         chart.title = title or "Pie Chart"
         chart.style = 10
 
-        data = Reference(ws, min_col=start_col + 1, min_row=start_row, max_row=end_row)
-        categories = Reference(ws, min_col=start_col, min_row=start_row + 1, max_row=end_row)
-
-        chart.add_data(data, titles_from_data=True)
+        chart.add_data(data, titles_from_data=titles_from_data)
         chart.set_categories(categories)
 
         ws.add_chart(chart, position)
@@ -3499,6 +4622,168 @@ class MCPService:
 
     # ==================== HELPER METHODS ====================
 
+    def _is_empty_cell_value(self, value: Any) -> bool:
+        """Check if a worksheet value should be treated as empty."""
+
+        if value is None:
+            return True
+        if isinstance(value, str) and value.strip() == "":
+            return True
+
+        try:
+            if pd.isna(value):
+                return True
+        except Exception:
+            pass
+
+        return False
+
+    def _resolve_column_index(
+        self,
+        ws,
+        column_ref: Any,
+        header_row: Optional[int] = None,
+        allow_end: bool = False
+    ) -> int:
+        """Resolve column index from integer, Excel letter, or header name."""
+
+        if isinstance(column_ref, int):
+            column_index = column_ref
+        else:
+            token = str(column_ref).strip()
+            if not token:
+                raise ValueError("Column reference cannot be empty")
+
+            if token.isdigit():
+                column_index = int(token)
+            elif token.isalpha():
+                column_index = column_index_from_string(token.upper())
+            else:
+                if header_row is None:
+                    header_row = self._find_header_row(ws)
+
+                target_header = token.lower()
+                for col_idx in range(1, ws.max_column + 1):
+                    header_value = ws.cell(row=header_row, column=col_idx).value
+                    if header_value is None:
+                        continue
+                    if str(header_value).strip().lower() == target_header:
+                        return col_idx
+
+                raise ValueError(f"Column '{column_ref}' not found")
+
+        max_allowed = ws.max_column + (1 if allow_end else 0)
+        if column_index < 1 or column_index > max_allowed:
+            raise ValueError(f"Column index {column_index} is out of range (1-{max_allowed})")
+
+        return column_index
+
+    def _sheet_to_dataframe(self, ws) -> pd.DataFrame:
+        """Convert a worksheet into a pandas DataFrame using detected headers."""
+
+        header_row = self._find_header_row(ws)
+
+        headers: List[str] = []
+        seen_headers: Dict[str, int] = {}
+
+        for col_idx in range(1, ws.max_column + 1):
+            raw_header = ws.cell(row=header_row, column=col_idx).value
+            base_name = str(raw_header).strip() if raw_header not in (None, "") else f"Column{col_idx}"
+
+            if base_name in seen_headers:
+                seen_headers[base_name] += 1
+                header_name = f"{base_name}_{seen_headers[base_name]}"
+            else:
+                seen_headers[base_name] = 1
+                header_name = base_name
+
+            headers.append(header_name)
+
+        rows: List[List[Any]] = []
+        for row_idx in range(header_row + 1, ws.max_row + 1):
+            row_values: List[Any] = []
+            has_data = False
+
+            for col_idx in range(1, ws.max_column + 1):
+                value = ws.cell(row=row_idx, column=col_idx).value
+                row_values.append(value)
+                if value not in (None, ""):
+                    has_data = True
+
+            if has_data:
+                rows.append(row_values)
+
+        return pd.DataFrame(rows, columns=headers)
+
+    def _write_dataframe_to_sheet(self, wb, sheet_name: str, df: pd.DataFrame):
+        """Write a DataFrame to a sheet, replacing sheet contents if it already exists."""
+
+        target_sheet = (sheet_name or "Sheet1")[:31]
+
+        if target_sheet in wb.sheetnames:
+            del wb[target_sheet]
+
+        ws = wb.create_sheet(title=target_sheet)
+
+        if df is None:
+            df = pd.DataFrame()
+
+        if len(df.columns) == 0:
+            ws.cell(row=1, column=1, value="No data")
+            return
+
+        for col_idx, col_name in enumerate(df.columns, start=1):
+            ws.cell(row=1, column=col_idx, value=str(col_name))
+
+        for row_idx, row_data in enumerate(df.itertuples(index=False, name=None), start=2):
+            for col_idx, value in enumerate(row_data, start=1):
+                write_value = value
+
+                try:
+                    if pd.isna(value):
+                        write_value = None
+                except Exception:
+                    pass
+
+                if isinstance(write_value, pd.Timestamp):
+                    write_value = write_value.to_pydatetime()
+                elif hasattr(write_value, "item") and not isinstance(write_value, (str, bytes)):
+                    try:
+                        write_value = write_value.item()
+                    except Exception:
+                        pass
+
+                ws.cell(row=row_idx, column=col_idx, value=write_value)
+
+    def _is_value_of_type(self, value: Any, expected_type: str) -> bool:
+        """Best-effort type check used by schema validation."""
+
+        expected = str(expected_type).strip().lower()
+
+        if expected in {"number", "numeric", "float", "int", "integer", "decimal"}:
+            try:
+                float(value)
+                return True
+            except (TypeError, ValueError):
+                return False
+
+        if expected in {"string", "text"}:
+            return isinstance(value, str)
+
+        if expected in {"date", "datetime"}:
+            if isinstance(value, (date, datetime, pd.Timestamp)):
+                return True
+            parsed = pd.to_datetime(value, errors="coerce")
+            return not pd.isna(parsed)
+
+        if expected in {"boolean", "bool"}:
+            if isinstance(value, bool):
+                return True
+            return str(value).strip().lower() in {"true", "false", "yes", "no", "1", "0"}
+
+        # Unknown expected type: treat as valid to avoid false negatives.
+        return True
+
     async def get_column_headers(self, file_id: str, sheet_name: str) -> List[str]:
         """Get column headers from a sheet for LLM context"""
         try:
@@ -3553,6 +4838,25 @@ class MCPService:
             raise ValueError(f"File with ID '{file_id}' not found")
         
         return matches[0]
+
+    def _parse_range_address(self, range_notation: str) -> Tuple[int, int, int, int]:
+        """Parse A1 range notation (e.g. A1:D10) into (start_row, start_col, end_row, end_col)."""
+
+        token = str(range_notation).strip().replace('$', '')
+        parts = token.split(':')
+
+        if len(parts) != 2:
+            raise ValueError(
+                f"Invalid range notation '{range_notation}'. Expected format like 'A1:D10'."
+            )
+
+        start_row, start_col = self._parse_cell_address(parts[0].strip())
+        end_row, end_col = self._parse_cell_address(parts[1].strip())
+
+        if end_row < start_row or end_col < start_col:
+            raise ValueError(f"Invalid range notation '{range_notation}'. End must be after start.")
+
+        return start_row, start_col, end_row, end_col
     
     def _parse_cell_address(self, address: str) -> Tuple[int, int]:
         """Parse cell address (e.g., 'A1' -> (1, 1))"""

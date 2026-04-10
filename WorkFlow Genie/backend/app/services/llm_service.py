@@ -3,55 +3,157 @@ LLM Service - ENHANCED WITH STUDENT DEMO EXAMPLES
 Comprehensive prompts with real demo scenarios
 """
 
-from openai import OpenAI
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import json
 from loguru import logger
 from datetime import datetime
 
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
+try:
+    from anthropic import Anthropic
+except ImportError:
+    Anthropic = None
+
 from app.core.config import settings
 
 class LLMService:
-    """Service for interacting with OpenAI GPT-4o for Excel automation"""
-    
+    """Service for interacting with OpenAI and Claude for Excel automation"""
+
     def __init__(self):
-        self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
-        self.model = "gpt-4o"
-        
+        self.default_provider = (settings.LLM_PROVIDER or "openai").strip().lower()
+
+        self.openai_client = None
+        if OpenAI and settings.OPENAI_API_KEY:
+            self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
+        self.claude_client = None
+        if Anthropic and settings.ANTHROPIC_API_KEY:
+            self.claude_client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    def _resolve_provider(self, provider: Optional[str] = None) -> str:
+        """Resolve active provider from request override or default settings."""
+
+        active_provider = (provider or self.default_provider or "openai").strip().lower()
+        if active_provider not in {"openai", "claude"}:
+            raise ValueError("Invalid provider. Use 'openai' or 'claude'.")
+        return active_provider
+
+    def _ensure_provider_client(self, provider: str) -> None:
+        """Validate that the selected provider client and API key are configured."""
+
+        if provider == "openai":
+            if not OpenAI:
+                raise ValueError("OpenAI SDK is not installed. Please install the 'openai' package.")
+            if not settings.OPENAI_API_KEY:
+                raise ValueError("OPENAI_API_KEY is not configured.")
+            if not self.openai_client:
+                self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+            return
+
+        if not Anthropic:
+            raise ValueError("Anthropic SDK is not installed. Please install the 'anthropic' package.")
+        if not settings.ANTHROPIC_API_KEY:
+            raise ValueError("ANTHROPIC_API_KEY is not configured.")
+        if not self.claude_client:
+            self.claude_client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+    def _normalize_claude_messages(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """Convert messages into the role/content shape required by Claude."""
+
+        normalized_messages: List[Dict[str, str]] = []
+        for message in messages:
+            role = (message.get("role") or "user").strip().lower()
+            if role not in {"user", "assistant"}:
+                continue
+
+            content = message.get("content")
+            if content is None:
+                content = ""
+            if not isinstance(content, str):
+                content = str(content)
+
+            normalized_messages.append({"role": role, "content": content})
+
+        return normalized_messages
+
+    def _extract_claude_text(self, response: Any) -> str:
+        """Extract plain text from Anthropic content blocks."""
+
+        content_blocks = getattr(response, "content", []) or []
+        text_parts: List[str] = []
+
+        for block in content_blocks:
+            if isinstance(block, dict):
+                if block.get("type") == "text" and block.get("text"):
+                    text_parts.append(str(block["text"]))
+                continue
+
+            if getattr(block, "type", None) == "text":
+                block_text = getattr(block, "text", None)
+                if block_text:
+                    text_parts.append(str(block_text))
+
+        return "\n".join(text_parts).strip()
+
     def generate_response(
-        self, 
-        messages: List[Dict[str, str]], 
-        session_summary: Optional[str] = None
+        self,
+        messages: List[Dict[str, str]],
+        session_summary: Optional[str] = None,
+        provider: Optional[str] = None
     ) -> str:
-        """Generate AI response based on conversation history"""
-        
+        """Generate AI response based on conversation history."""
+
         system_prompt = self._build_system_prompt(session_summary)
-        
+        active_provider = self._resolve_provider(provider)
+
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    *messages
-                ],
+            self._ensure_provider_client(active_provider)
+
+            if active_provider == "openai":
+                response = self.openai_client.chat.completions.create(
+                    model=settings.OPENAI_MODEL,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        *messages
+                    ],
+                    temperature=0.7,
+                    max_completion_tokens=2000
+                )
+
+                return response.choices[0].message.content or "I apologize, I couldn't generate a response."
+
+            claude_messages = self._normalize_claude_messages(messages)
+            if not claude_messages:
+                claude_messages = [{"role": "user", "content": "Please continue."}]
+
+            response = self.claude_client.messages.create(
+                model=settings.CLAUDE_MODEL,
+                system=system_prompt,
+                messages=claude_messages,
                 temperature=0.7,
-                max_completion_tokens=2000
+                max_tokens=2000
             )
-            
-            return response.choices[0].message.content or "I apologize, I couldn't generate a response."
-            
+
+            response_text = self._extract_claude_text(response)
+            return response_text or "I apologize, I couldn't generate a response."
+
         except Exception as e:
-            logger.error(f"LLM error: {e}")
+            logger.error(f"LLM error ({active_provider}): {e}")
             raise Exception(f"Failed to generate response: {str(e)}")
-    
+
     def plan_excel_operations(
-        self, 
-        user_intent: str, 
-        context: Dict
+        self,
+        user_intent: str,
+        context: Dict,
+        provider: Optional[str] = None
     ) -> Dict:
         """
-        Plan Excel operations based on user intent
-        
+        Plan Excel operations based on user intent.
+
         Returns JSON with steps:
         {
             "steps": [
@@ -64,21 +166,35 @@ class LLMService:
             ]
         }
         """
-        
+
         planning_prompt = self._build_planning_prompt(user_intent, context)
-        
+        active_provider = self._resolve_provider(provider)
+        response_text = "{}"
+
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": planning_prompt}
-                ],
-                temperature=0.3,
-                max_completion_tokens=2000
-            )
-            
-            response_text = response.choices[0].message.content or "{}"
-            
+            self._ensure_provider_client(active_provider)
+
+            if active_provider == "openai":
+                response = self.openai_client.chat.completions.create(
+                    model=settings.OPENAI_MODEL,
+                    messages=[
+                        {"role": "system", "content": planning_prompt}
+                    ],
+                    temperature=0.3,
+                    max_completion_tokens=2000
+                )
+                response_text = response.choices[0].message.content or "{}"
+            else:
+                response = self.claude_client.messages.create(
+                    model=settings.CLAUDE_MODEL,
+                    messages=[
+                        {"role": "user", "content": planning_prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=2000
+                )
+                response_text = self._extract_claude_text(response) or "{}"
+
             # Clean JSON
             response_text = response_text.strip()
             if response_text.startswith("```json"):
@@ -88,28 +204,32 @@ class LLMService:
             if response_text.endswith("```"):
                 response_text = response_text[:-3]
             response_text = response_text.strip()
-            
+
             plan = json.loads(response_text)
-            
+
             logger.info(f"Generated plan with {len(plan.get('steps', []))} steps")
-            
+
             return plan
-            
+
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error: {e}")
             logger.error(f"Response was: {response_text}")
             raise Exception("Failed to parse operation plan")
         except Exception as e:
-            logger.error(f"Planning error: {e}")
+            logger.error(f"Planning error ({active_provider}): {e}")
             raise Exception(f"Failed to plan operations: {str(e)}")
-    
+
     def generate_session_summary(
-        self, 
-        messages: List[Dict], 
-        operations: List[Dict]
+        self,
+        messages: List[Dict],
+        operations: Optional[List[Dict]] = None,
+        provider: Optional[str] = None
     ) -> str:
-        """Generate a 2-4 sentence summary of the session"""
-        
+        """Generate a 2-4 sentence summary of the session."""
+
+        operations = operations or []
+        active_provider = self._resolve_provider(provider)
+
         try:
             summary_prompt = f"""
 Based on this conversation and operations, generate a 2-4 sentence summary.
@@ -123,30 +243,46 @@ Recent operations:
 
 Generate a concise summary (2-4 sentences only):
 """
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
+
+            self._ensure_provider_client(active_provider)
+
+            if active_provider == "openai":
+                response = self.openai_client.chat.completions.create(
+                    model=settings.OPENAI_MODEL,
+                    messages=[
+                        {"role": "system", "content": "You are a concise summarizer. Output only 2-4 sentences."},
+                        {"role": "user", "content": summary_prompt}
+                    ],
+                    temperature=0.5,
+                    max_completion_tokens=200
+                )
+
+                return response.choices[0].message.content or "Session summary unavailable."
+
+            response = self.claude_client.messages.create(
+                model=settings.CLAUDE_MODEL,
+                system="You are a concise summarizer. Output only 2-4 sentences.",
                 messages=[
-                    {"role": "system", "content": "You are a concise summarizer. Output only 2-4 sentences."},
                     {"role": "user", "content": summary_prompt}
                 ],
                 temperature=0.5,
-                max_completion_tokens=200
+                max_tokens=200
             )
-            
-            return response.choices[0].message.content or "Session summary unavailable."
-            
+
+            response_text = self._extract_claude_text(response)
+            return response_text or "Session summary unavailable."
+
         except Exception as e:
-            logger.error(f"Summary generation error: {e}")
+            logger.error(f"Summary generation error ({active_provider}): {e}")
             return "Session in progress."
-    
+
     def detect_excel_intent(
         self,
         message: str,
         file_id: Optional[str] = None
     ) -> bool:
         """
-        Detect if message requires Excel operations
+        Detect if message requires Excel operations.
 
         Returns: True if Excel operation needed, False if general chat
         """
@@ -176,7 +312,20 @@ Generate a concise summary (2-4 sentences only):
             'pie chart', 'scatter', 'plot', 'graph', 'visualiz',
             'formula', 'vlookup', 'sumif', 'countif', 'averageif',
             'conditional', 'data bar', 'icon set', 'color scale',
-            'auto fit', 'width', 'detect header'
+            'auto fit', 'width', 'detect header',
+            # Data engineering and schema tools
+            'join', 'merge sheets', 'append sheets', 'union', 'consolidate',
+            'unpivot', 'melt', 'long format', 'wide format',
+            'excel table', 'table style', 'schema', 'required columns',
+            'standardize dates', 'date format', 'normalize date',
+            'number format', 'currency format', 'percentage format',
+            'fill formula', 'drag formula', 'copy formula down', 'validate schema',
+            # Structure and cleaning tools
+            'insert row', 'insert rows', 'delete rows by index',
+            'insert column', 'insert columns', 'delete column', 'delete columns',
+            'rename columns', 'fill missing', 'missing values', 'impute',
+            'text case', 'uppercase', 'lowercase', 'proper case',
+            'trim whitespace', 'remove extra spaces', 'clean text'
         ]
 
         # Action words that indicate operations
@@ -198,53 +347,56 @@ Generate a concise summary (2-4 sentences only):
 
         # Default to general chat
         return False
-    
+
     def format_operation_results(
-        self, 
-        steps: List[Dict], 
-        results: List[Dict]
+        self,
+        steps: List[Dict],
+        results: List[Dict],
+        provider: Optional[str] = None
     ) -> str:
-        """
-        Format operation results into natural language response
-        """
-        
-        if not results:
-            return "I completed the operations successfully."
-        
-        try:
-            format_prompt = f"""
-Convert these operation results into a friendly, natural response.
-Be concise but informative. Use 1-3 sentences.
+      """Format operation results into a deterministic, execution-grounded response."""
 
-Operations performed:
-{json.dumps(steps, indent=2)}
+      _ = steps  # Kept for backward-compatible signature.
+      _ = provider
 
-Results:
-{json.dumps(results, indent=2)}
+      if not results:
+        return "No operations were executed."
 
-Generate a friendly response:
-"""
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are a friendly assistant. Convert technical results into natural language. Be concise."},
-                    {"role": "user", "content": format_prompt}
-                ],
-                temperature=0.7,
-                max_completion_tokens=300
-            )
-            
-            return response.choices[0].message.content or "Operations completed successfully."
-            
-        except Exception as e:
-            logger.error(f"Result formatting error: {e}")
-            return f"I completed {len(results)} operation(s) successfully."
+      successful_results = [r for r in results if r.get("status") == "completed"]
+      failed_results = [r for r in results if r.get("status") == "failed"]
+
+      message_parts: List[str] = []
+
+      if successful_results:
+        successful_tools = [r.get("tool", "unknown tool") for r in successful_results]
+        message_parts.append(
+          f"I completed {len(successful_results)} operation(s) successfully: {', '.join(successful_tools)}."
+        )
+
+      if failed_results:
+        failed_tools = [r.get("tool", "unknown tool") for r in failed_results]
+        first_failure = failed_results[0]
+        failure_reason = first_failure.get("error") or "Unknown error"
+
+        message_parts.append(
+          f"{len(failed_results)} operation(s) failed: {', '.join(failed_tools)}. "
+          f"First failure reason: {failure_reason}."
+        )
+
+        if any("chart" in str(tool).lower() or "plot" in str(tool).lower() for tool in failed_tools):
+          message_parts.append(
+            "A chart step failed, so charts from failed steps were not added to the workbook."
+          )
+
+      if not message_parts:
+        return "Operations completed."
+
+      return " ".join(message_parts)
     
     def _build_system_prompt(self, session_summary: Optional[str] = None) -> str:
         """Build system prompt for general conversation"""
 
-        base_prompt = """You are Excelerate, an advanced AI assistant that provides complete Excel automation through natural language. You are powered by 58 specialized MCP tools and a formula engine supporting 106+ Excel-compatible functions.
+        base_prompt = """You are Excelerate, an advanced AI assistant that provides complete Excel automation through natural language. You are powered by 74 specialized MCP tools and a formula engine supporting 106+ Excel-compatible functions.
 
 You help users with ANY Excel task through simple conversation:
 - Data manipulation: "Update John's salary", "Remove duplicates", "Split the Name column by comma"
@@ -266,7 +418,7 @@ Be friendly, concise, and helpful. Understand user intent naturally and suggest 
         return base_prompt
     
     def _build_planning_prompt(self, user_intent: str, context: Dict) -> str:
-        """Build comprehensive planning prompt with all 58 tools and 106+ formulas"""
+        """Build comprehensive planning prompt with all 74 tools and 106+ formulas"""
 
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -286,7 +438,7 @@ Be friendly, concise, and helpful. Understand user intent naturally and suggest 
 
         subject_columns_str = json.dumps(subject_columns) if subject_columns else '["Subject1", "Subject2", "Subject3"]'
 
-        prompt = f"""You are Excelerate, an advanced Excel automation planner with 58 MCP tools and 106+ formula support. You handle student management, business operations, data analysis, charting, formatting, and all Excel tasks.
+        prompt = f"""You are Excelerate, an advanced Excel automation planner with 74 MCP tools and 106+ formula support. You handle student management, business operations, data analysis, charting, formatting, and all Excel tasks.
 
 Analyze the user's intent and generate a precise step-by-step execution plan using the available tools.
 
@@ -316,7 +468,7 @@ USER REQUEST
 {user_intent}
 
 ═══════════════════════════════════════════════════════════════════════════════
-ALL 58 AVAILABLE MCP TOOLS
+ALL 74 AVAILABLE MCP TOOLS
 ═══════════════════════════════════════════════════════════════════════════════
 
 ─── BASIC TOOLS (1-9) ───
@@ -419,6 +571,28 @@ ALL 58 AVAILABLE MCP TOOLS
 56. create_line_chart(file_id, sheet_name, data_range, title?, position?) - Line chart
 57. create_pie_chart(file_id, sheet_name, data_range, title?, position?) - Pie chart
 58. create_scatter_plot(file_id, sheet_name, x_range, y_range, title?, position?) - Scatter plot
+
+─── DATA ENGINEERING TOOLS (59-66) ───
+
+59. join_sheets(file_id, left_sheet, right_sheet, left_key, right_key?, join_type?, target_sheet?) - Join two sheets (left/right/inner/outer)
+60. append_sheets(file_id, source_sheets, target_sheet?, deduplicate?) - Append multiple sheets into one consolidated sheet
+61. unpivot_columns(file_id, sheet_name, id_columns?, value_columns?, variable_column?, value_column?, target_sheet?) - Convert wide data to long format
+62. create_excel_table(file_id, sheet_name, range_notation, table_name?, style_name?) - Create native Excel table object from range
+63. fill_formula_down(file_id, sheet_name, start_cell, end_row?) - Copy formula down with relative references
+64. set_number_format(file_id, sheet_name, range_notation, number_format) - Apply Excel number/currency/date display formats
+65. standardize_dates(file_id, sheet_name, column, output_format?, target_column?, day_first?) - Normalize mixed date values to a consistent format
+66. validate_schema(file_id, sheet_name, required_columns, column_types?, allow_extra_columns?) - Validate required columns and optional data types
+
+─── STRUCTURE & CLEANING TOOLS (67-74) ───
+
+67. insert_rows(file_id, sheet_name, row_index, amount?) - Insert blank row(s) at a specific index
+68. delete_rows_by_index(file_id, sheet_name, row_index, amount?) - Delete row(s) by row number
+69. insert_columns(file_id, sheet_name, column, amount?) - Insert blank column(s) before an index/letter/header
+70. delete_columns(file_id, sheet_name, columns) - Delete one or more columns by name/letter/index
+71. rename_columns(file_id, sheet_name, rename_map, case_sensitive?) - Rename one or more header columns
+72. fill_missing_values(file_id, sheet_name, column, strategy?, value?, target_column?) - Fill blanks using constant/mean/median/mode/forward-fill
+73. standardize_text_case(file_id, sheet_name, column, case_style?, target_column?) - Convert text to upper/lower/title/sentence case
+74. trim_whitespace(file_id, sheet_name, column, target_column?, collapse_internal_spaces?) - Trim spaces and optionally collapse repeated spaces
 
 ═══════════════════════════════════════════════════════════════════════════════
 FORMULA ENGINE - 106+ EXCEL-COMPATIBLE FORMULAS (via apply_formula tool)
@@ -536,6 +710,26 @@ Rule 13: Sheet Operations
 - "move sheet to position 0" → move_sheet
 - "freeze first row" → freeze_panes with cell="A2"
 - "protect sheet" → protect_sheet
+
+Rule 14: Data Engineering
+- "join sheet A and B by EmployeeID" → join_sheets
+- "append Jan, Feb, Mar sheets" → append_sheets
+- "convert to long format" / "unpivot" → unpivot_columns
+- "make this range an Excel table" → create_excel_table
+- "fill this formula down" → fill_formula_down
+- "set currency format" / "set percentage format" → set_number_format
+- "normalize all dates to YYYY-MM-DD" → standardize_dates
+- "validate schema" / "check required columns" → validate_schema
+
+Rule 15: Structure and Cleaning
+- "insert 2 rows at row 5" → insert_rows with row_index=5, amount=2
+- "delete rows 10-20" → delete_rows_by_index with row_index=10, amount=11
+- "insert column before Salary" → insert_columns
+- "delete Name and Address columns" → delete_columns
+- "rename Dept to Department" → rename_columns
+- "fill missing salary with mean" → fill_missing_values with strategy="mean"
+- "make names uppercase" / "title case" → standardize_text_case
+- "trim whitespace in Email" → trim_whitespace
 
 ═══════════════════════════════════════════════════════════════════════════════
 EXAMPLES FOR NEW TOOLS
@@ -812,6 +1006,209 @@ Input: "Merge First Name and Last Name into Full Name"
         "new_column_name": "Full Name"
       }},
       "description": "Merge First Name and Last Name into Full Name"
+    }}
+  ]
+}}
+
+--- Join Sheets ---
+Input: "Join Employees and Salaries sheets by EmployeeID"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "join_sheets",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "left_sheet": "Employees",
+        "right_sheet": "Salaries",
+        "left_key": "EmployeeID",
+        "join_type": "left",
+        "target_sheet": "JoinedData"
+      }},
+      "description": "Join Employees and Salaries using EmployeeID"
+    }}
+  ]
+}}
+
+--- Append Sheets ---
+Input: "Append Jan, Feb, and Mar sheets into one"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "append_sheets",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "source_sheets": ["Jan", "Feb", "Mar"],
+        "target_sheet": "Q1_Combined",
+        "deduplicate": true
+      }},
+      "description": "Append monthly sheets into one consolidated sheet"
+    }}
+  ]
+}}
+
+--- Unpivot Columns ---
+Input: "Unpivot Math, Physics, Chemistry into long format"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "unpivot_columns",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "id_columns": ["Student Name"],
+        "value_columns": ["Math", "Physics", "Chemistry"],
+        "variable_column": "Subject",
+        "value_column": "Marks",
+        "target_sheet": "LongFormat"
+      }},
+      "description": "Convert subject columns to long format"
+    }}
+  ]
+}}
+
+--- Fill Formula Down ---
+Input: "Fill the formula in E2 down to row 500"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "fill_formula_down",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "start_cell": "E2",
+        "end_row": 500
+      }},
+      "description": "Copy formula in E2 down to row 500"
+    }}
+  ]
+}}
+
+--- Standardize Dates ---
+Input: "Normalize JoinDate column to YYYY-MM-DD"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "standardize_dates",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "column": "JoinDate",
+        "output_format": "YYYY-MM-DD"
+      }},
+      "description": "Normalize date values in JoinDate column"
+    }}
+  ]
+}}
+
+--- Validate Schema ---
+Input: "Validate that required columns exist and Salary is numeric"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "validate_schema",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "required_columns": ["EmployeeID", "Name", "Salary"],
+        "column_types": {{"Salary": "number"}},
+        "allow_extra_columns": true
+      }},
+      "description": "Validate required columns and Salary type"
+    }}
+  ]
+}}
+
+--- Insert Rows ---
+Input: "Insert 3 rows at row 5"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "insert_rows",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "row_index": 5,
+        "amount": 3
+      }},
+      "description": "Insert 3 blank rows at row 5"
+    }}
+  ]
+}}
+
+--- Rename Columns ---
+Input: "Rename Dept to Department and EmpID to EmployeeID"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "rename_columns",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "rename_map": {{"Dept": "Department", "EmpID": "EmployeeID"}}
+      }},
+      "description": "Rename headers to standardized names"
+    }}
+  ]
+}}
+
+--- Fill Missing Values ---
+Input: "Fill missing Salary values with the mean"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "fill_missing_values",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "column": "Salary",
+        "strategy": "mean"
+      }},
+      "description": "Impute missing Salary values using column mean"
+    }}
+  ]
+}}
+
+--- Standardize Text Case ---
+Input: "Convert Name column to title case"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "standardize_text_case",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "column": "Name",
+        "case_style": "title"
+      }},
+      "description": "Convert text in Name column to title case"
+    }}
+  ]
+}}
+
+--- Trim Whitespace ---
+Input: "Trim extra spaces in Email"
+{{
+  "steps": [
+    {{
+      "step": 1,
+      "tool": "trim_whitespace",
+      "parameters": {{
+        "file_id": "{context.get('file_id')}",
+        "sheet_name": "{context.get('sheet_name')}",
+        "column": "Email",
+        "collapse_internal_spaces": true
+      }},
+      "description": "Trim and normalize spacing in Email column"
     }}
   ]
 }}
