@@ -19,6 +19,7 @@ from app.core.models import Session as ChatSession, Message, Operation
 from app.services.llm_service import llm_service
 from app.services.claude_mcp_service import claude_mcp_service
 from app.services.mcp_service import mcp_service
+from app.services.rag_service import rag_service
 
 router = APIRouter()
 
@@ -31,6 +32,16 @@ class MessageRequest(BaseModel):
     file_id: Optional[str] = Field(None, description="Excel file ID to operate on (UUID format)", example="3cf05b87-ce48-4dd7-b463-547d911ffb")
     sheet_name: str = Field(default="HR", description="Sheet name within the Excel file", example="HR")
     provider: Optional[str] = Field(None, description="LLM provider override: openai or claude", example="claude")
+    use_rag: Optional[bool] = Field(
+        default=None,
+        description="RAG mode for non-operation messages: true=force RAG, false=disable, null=auto",
+    )
+    rag_top_k: int = Field(
+        default=4,
+        ge=1,
+        le=20,
+        description="Number of chunks to retrieve when RAG is used",
+    )
 
 class MessageResponse(BaseModel):
     """Response model for message"""
@@ -168,7 +179,14 @@ async def send_message(
         
         is_excel_operation = llm_service.detect_excel_intent(request_data.message, request_data.file_id)
         
-        if is_excel_operation:
+        use_rag = _should_use_rag(
+            message=request_data.message,
+            file_id=request_data.file_id,
+            explicit_use_rag=request_data.use_rag,
+            is_excel_operation=is_excel_operation,
+        )
+
+        if is_excel_operation and not use_rag:
             logger.info("🔧 Detected Excel operation intent")
             
             # ═══════════════════════════════════════════════════════════
@@ -262,17 +280,58 @@ Which would you prefer?"""
             # ═══════════════════════════════════════════════════════════
             
             logger.info("💭 Detected general conversation")
-            
-            response = llm_service.generate_response(
-                messages=conversation_history,
-                session_summary=chat_session.summary,
-                provider=provider
-            )
+
+            response_context: Dict[str, object] = {
+                "conversation": True,
+                "provider": provider,
+                "rag_used": False,
+            }
+
+            if use_rag:
+                # Only apply sheet filter if client explicitly set it. The default "HR"
+                # should not silently restrict retrieval across other sheets.
+                requested_sheet = (
+                    request_data.sheet_name
+                    if "sheet_name" in request_data.model_fields_set
+                    else None
+                )
+
+                try:
+                    rag_result = rag_service.answer_query(
+                        question=request_data.message,
+                        top_k=request_data.rag_top_k,
+                        file_id=request_data.file_id,
+                        sheet_name=requested_sheet,
+                        provider=provider,
+                    )
+                    response = rag_result["answer"]
+                    response_context.update(
+                        {
+                            "rag_used": True,
+                            "retrieved_chunks": rag_result.get("retrieved_chunks", 0),
+                            "rag_sources": rag_result.get("sources", []),
+                        }
+                    )
+                except ValueError as rag_exc:
+                    logger.warning(f"RAG unavailable, falling back to chat response: {rag_exc}")
+                    response = llm_service.generate_response(
+                        messages=conversation_history,
+                        session_summary=chat_session.summary,
+                        provider=provider,
+                    )
+                    response_context["rag_fallback_reason"] = str(rag_exc)
+            else:
+                response = llm_service.generate_response(
+                    messages=conversation_history,
+                    session_summary=chat_session.summary,
+                    provider=provider
+                )
             
             assistant_message = Message(
                 session_id=chat_session.id,
                 role="assistant",
-                content=response
+                content=response,
+                meta_data=json.dumps(response_context)
             )
             db.add(assistant_message)
             
@@ -300,7 +359,7 @@ Which would you prefer?"""
                 session_id=chat_session.id,
                 response=response,
                 operations=[],
-                context={"conversation": True, "provider": provider}
+                context=response_context
             )
     
     except HTTPException:
@@ -672,3 +731,44 @@ def _resolve_provider(provider: Optional[str]) -> str:
     if resolved_provider not in {"openai", "claude"}:
         raise HTTPException(status_code=400, detail="Invalid provider. Use 'openai' or 'claude'.")
     return resolved_provider
+
+
+def _should_use_rag(
+    message: str,
+    file_id: Optional[str],
+    explicit_use_rag: Optional[bool],
+    is_excel_operation: bool,
+) -> bool:
+    """Determine if non-operation message should use RAG retrieval."""
+
+    if not settings.RAG_ENABLED:
+        return False
+
+    if explicit_use_rag is not None:
+        return explicit_use_rag
+
+    if is_excel_operation:
+        return False
+
+    message_lower = message.lower()
+    small_talk_markers = ["hello", "hi", "hey", "thanks", "thank you", "how are you"]
+    if any(marker in message_lower for marker in small_talk_markers):
+        return False
+
+    rag_markers = [
+        "sheet",
+        "row",
+        "column",
+        "table",
+        "excel",
+        "file",
+        "in the data",
+        "from the data",
+        "what does",
+        "how many",
+        "show me",
+    ]
+
+    return bool(file_id) or message_lower.endswith("?") or any(
+        marker in message_lower for marker in rag_markers
+    )

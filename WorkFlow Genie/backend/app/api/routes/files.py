@@ -11,11 +11,14 @@ from typing import Optional, List
 from datetime import datetime
 from pathlib import Path
 import uuid
+from loguru import logger
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.models import User, ExcelFile
 from app.api.routes.auth import get_current_user
 from app.services.mcp_service import MCPService
+from app.services.rag_service import rag_service
 
 router = APIRouter(prefix="/api/files", tags=["File Management"])
 mcp_service = MCPService()
@@ -29,6 +32,8 @@ class FileUploadResponse(BaseModel):
     filename: str
     filepath: str
     message: str
+    rag_synced: bool = True
+    rag_message: Optional[str] = None
 
 class FileMetadata(BaseModel):
     file_id: str
@@ -135,12 +140,30 @@ async def upload_file(
     
     db.add(excel_file)
     db.commit()
+
+    rag_synced = True
+    rag_message: Optional[str] = None
+    if settings.RAG_ENABLED:
+        try:
+            rag_result = rag_service.refresh_index()
+            rag_message = (
+                f"RAG index synced ({rag_result.get('indexed_chunks', 0)} chunks across "
+                f"{rag_result.get('indexed_files', 0)} files)"
+            )
+        except Exception as exc:
+            rag_synced = False
+            rag_message = f"File uploaded, but failed to sync RAG index: {exc}"
+            logger.error(rag_message)
+    else:
+        rag_message = "RAG is disabled; index sync skipped"
     
     return FileUploadResponse(
         file_id=file_id,
         filename=file.filename,
         filepath=str(file_path),
-        message="File uploaded successfully to session"
+        message="File uploaded successfully to session",
+        rag_synced=rag_synced,
+        rag_message=rag_message,
     )
 
 
@@ -326,10 +349,28 @@ async def delete_file(
     # Delete database record
     db.delete(excel_file)
     db.commit()
+
+    rag_synced = True
+    rag_message: Optional[str] = None
+    if settings.RAG_ENABLED:
+        try:
+            rag_result = rag_service.refresh_index()
+            rag_message = (
+                f"RAG index synced ({rag_result.get('indexed_chunks', 0)} chunks across "
+                f"{rag_result.get('indexed_files', 0)} files)"
+            )
+        except Exception as exc:
+            rag_synced = False
+            rag_message = f"File deleted, but failed to sync RAG index: {exc}"
+            logger.error(rag_message)
+    else:
+        rag_message = "RAG is disabled; index sync skipped"
     
     return {
         "message": "File deleted successfully",
-        "file_id": file_id
+        "file_id": file_id,
+        "rag_synced": rag_synced,
+        "rag_message": rag_message,
     }
 
 

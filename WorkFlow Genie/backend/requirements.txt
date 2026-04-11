@@ -10,7 +10,7 @@ python-multipart==0.0.6        # For file uploads
 # ============================================================================
 # DATABASE
 # ============================================================================
-sqlalchemy==2.0.25              # ORM
+sqlalchemy==2.0.32              # ORM
 alembic==1.13.1                 # Database migrations
 
 # ============================================================================
@@ -25,6 +25,8 @@ python-jose[cryptography]==3.3.0  # Additional JWT support
 # ============================================================================
 openai>=1.54.0                  # GPT-4 integration
 anthropic>=0.39.0               # Claude integration (optional)
+sentence-transformers>=3.0.0    # Local embedding model option for RAG
+numpy>=1.26.0                   # Vector operations for retrieval
 
 # ============================================================================
 # EXCEL OPERATIONS
@@ -37,7 +39,7 @@ xlrd==2.0.1                     # Read .xls files (older format)
 # UTILITIES
 # ============================================================================
 python-dotenv==1.0.0            # Environment variables
-pydantic==2.5.3                 # Data validation
+pydantic>=2.6.0                 # Data validation
 pydantic-settings==2.1.0        # Settings management
 loguru==0.7.2                   # Logging
 

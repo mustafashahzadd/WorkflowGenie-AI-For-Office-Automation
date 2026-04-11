@@ -1,7 +1,7 @@
 import sqlite3
 
 # Connect to database
-conn = sqlite3.connect('workflow_genie.db')
+conn = sqlite3.connect('workflowgenie.db')
 cursor = conn.cursor()
 
 # Query 1: View all users
