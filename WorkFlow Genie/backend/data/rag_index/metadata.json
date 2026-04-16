@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-04-15T13:27:21.484136",
+  "built_at": "2026-04-16T18:34:21.266324",
   "embedding_provider": "openai",
   "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
   "openai_embedding_model": "text-embedding-3-small",
@@ -16,700 +16,700 @@
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 2,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 2\nData: Expense ID: EXP-0001 | Date: 2025-05-19 | Department: IT | Expense Item: Server Hosting | Amount ($): 998.37"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 2\nData: Expense ID: EXP-0001 | Date: 45796 | Department: IT | Expense Item: Server Hosting | Amount ($): 998.37"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 3,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 3\nData: Expense ID: EXP-0002 | Date: 2026-02-13 | Department: HR | Expense Item: Internet Bill | Amount ($): 2704.61"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 3\nData: Expense ID: EXP-0002 | Date: 46066 | Department: HR | Expense Item: Internet Bill | Amount ($): 2704.61"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 4,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 4\nData: Expense ID: EXP-0003 | Date: 2026-03-30 | Department: IT | Expense Item: Airfare | Amount ($): 743.9"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 4\nData: Expense ID: EXP-0003 | Date: 46111 | Department: IT | Expense Item: Airfare | Amount ($): 743.9"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 5,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 5\nData: Expense ID: EXP-0004 | Date: 2025-11-22 | Department: Marketing | Expense Item: Pantry Supplies | Amount ($): 958.27"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 5\nData: Expense ID: EXP-0004 | Date: 45983 | Department: Marketing | Expense Item: Pantry Supplies | Amount ($): 958.27"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 6,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 6\nData: Expense ID: EXP-0005 | Date: 2025-12-07 | Department: Sales | Expense Item: Online Ads | Amount ($): 2340.01"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 6\nData: Expense ID: EXP-0005 | Date: 45998 | Department: Sales | Expense Item: Online Ads | Amount ($): 2340.01"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 7,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 7\nData: Expense ID: EXP-0006 | Date: 2025-12-18 | Department: Marketing | Expense Item: Pantry Supplies | Amount ($): 4378.71"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 7\nData: Expense ID: EXP-0006 | Date: 46009 | Department: Marketing | Expense Item: Pantry Supplies | Amount ($): 4378.71"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 8,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 8\nData: Expense ID: EXP-0007 | Date: 2026-01-30 | Department: IT | Expense Item: Hotel Accommodation | Amount ($): 423.16"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 8\nData: Expense ID: EXP-0007 | Date: 46052 | Department: IT | Expense Item: Hotel Accommodation | Amount ($): 423.16"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 9,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 9\nData: Expense ID: EXP-0008 | Date: 2026-02-18 | Department: HR | Expense Item: Hotel Accommodation | Amount ($): 4049.71"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 9\nData: Expense ID: EXP-0008 | Date: 46071 | Department: HR | Expense Item: Hotel Accommodation | Amount ($): 4049.71"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 10,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 10\nData: Expense ID: EXP-0009 | Date: 2025-04-30 | Department: Operations | Expense Item: Legal Consultation | Amount ($): 4287.04"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 10\nData: Expense ID: EXP-0009 | Date: 45777 | Department: Operations | Expense Item: Legal Consultation | Amount ($): 4287.04"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 11,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 11\nData: Expense ID: EXP-0010 | Date: 2025-07-06 | Department: Finance | Expense Item: Server Hosting | Amount ($): 534.65"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 11\nData: Expense ID: EXP-0010 | Date: 45844 | Department: Finance | Expense Item: Server Hosting | Amount ($): 534.65"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 12,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 12\nData: Expense ID: EXP-0011 | Date: 2026-02-26 | Department: Marketing | Expense Item: Online Ads | Amount ($): 3278.12"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 12\nData: Expense ID: EXP-0011 | Date: 46079 | Department: Marketing | Expense Item: Online Ads | Amount ($): 3278.12"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 13,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 13\nData: Expense ID: EXP-0012 | Date: 2025-06-13 | Department: HR | Expense Item: Hotel Accommodation | Amount ($): 2725.91"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 13\nData: Expense ID: EXP-0012 | Date: 45821 | Department: HR | Expense Item: Hotel Accommodation | Amount ($): 2725.91"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 14,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 14\nData: Expense ID: EXP-0013 | Date: 2025-09-07 | Department: Finance | Expense Item: Team Lunch | Amount ($): 123.05"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 14\nData: Expense ID: EXP-0013 | Date: 45907 | Department: Finance | Expense Item: Team Lunch | Amount ($): 123.05"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 15,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 15\nData: Expense ID: EXP-0014 | Date: 2026-03-26 | Department: Sales | Expense Item: Online Ads | Amount ($): 511.65"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 15\nData: Expense ID: EXP-0014 | Date: 46107 | Department: Sales | Expense Item: Online Ads | Amount ($): 511.65"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 16,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 16\nData: Expense ID: EXP-0015 | Date: 2026-03-27 | Department: Sales | Expense Item: Internet Bill | Amount ($): 3780.15"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 16\nData: Expense ID: EXP-0015 | Date: 46108 | Department: Sales | Expense Item: Internet Bill | Amount ($): 3780.15"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 17,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 17\nData: Expense ID: EXP-0016 | Date: 2026-02-23 | Department: Finance | Expense Item: Event Sponsorship | Amount ($): 1220.08"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 17\nData: Expense ID: EXP-0016 | Date: 46076 | Department: Finance | Expense Item: Event Sponsorship | Amount ($): 1220.08"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 18,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 18\nData: Expense ID: EXP-0017 | Date: 2025-12-21 | Department: Sales | Expense Item: Laptops | Amount ($): 2061.75"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 18\nData: Expense ID: EXP-0017 | Date: 46012 | Department: Sales | Expense Item: Laptops | Amount ($): 2061.75"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 19,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 19\nData: Expense ID: EXP-0018 | Date: 2025-12-13 | Department: HR | Expense Item: Office Supplies | Amount ($): 2432.72"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 19\nData: Expense ID: EXP-0018 | Date: 46004 | Department: HR | Expense Item: Office Supplies | Amount ($): 2432.72"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 20,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 20\nData: Expense ID: EXP-0019 | Date: 2025-07-27 | Department: Marketing | Expense Item: Electricity Bill | Amount ($): 4330.02"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 20\nData: Expense ID: EXP-0019 | Date: 45865 | Department: Marketing | Expense Item: Electricity Bill | Amount ($): 4330.02"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 21,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 21\nData: Expense ID: EXP-0020 | Date: 2025-06-07 | Department: HR | Expense Item: Online Ads | Amount ($): 4517.09"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 21\nData: Expense ID: EXP-0020 | Date: 45815 | Department: HR | Expense Item: Online Ads | Amount ($): 4517.09"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 22,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 22\nData: Expense ID: EXP-0021 | Date: 2026-03-29 | Department: HR | Expense Item: Pantry Supplies | Amount ($): 864.95"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 22\nData: Expense ID: EXP-0021 | Date: 46110 | Department: HR | Expense Item: Pantry Supplies | Amount ($): 864.95"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 23,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 23\nData: Expense ID: EXP-0022 | Date: 2025-06-28 | Department: Finance | Expense Item: Training Courses | Amount ($): 60.67"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 23\nData: Expense ID: EXP-0022 | Date: 45836 | Department: Finance | Expense Item: Training Courses | Amount ($): 60.67"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 24,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 24\nData: Expense ID: EXP-0023 | Date: 2025-12-31 | Department: Operations | Expense Item: Training Courses | Amount ($): 1982.59"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 24\nData: Expense ID: EXP-0023 | Date: 46022 | Department: Operations | Expense Item: Training Courses | Amount ($): 1982.59"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 25,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 25\nData: Expense ID: EXP-0024 | Date: 2025-05-14 | Department: Operations | Expense Item: Office Supplies | Amount ($): 4636.26"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 25\nData: Expense ID: EXP-0024 | Date: 45791 | Department: Operations | Expense Item: Office Supplies | Amount ($): 4636.26"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 26,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 26\nData: Expense ID: EXP-0025 | Date: 2025-04-17 | Department: Marketing | Expense Item: Training Courses | Amount ($): 3936.39"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 26\nData: Expense ID: EXP-0025 | Date: 45764 | Department: Marketing | Expense Item: Training Courses | Amount ($): 3936.39"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 27,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 27\nData: Expense ID: EXP-0026 | Date: 2025-07-06 | Department: Finance | Expense Item: Team Lunch | Amount ($): 1461.98"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 27\nData: Expense ID: EXP-0026 | Date: 45844 | Department: Finance | Expense Item: Team Lunch | Amount ($): 1461.98"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 28,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 28\nData: Expense ID: EXP-0027 | Date: 2025-09-09 | Department: Operations | Expense Item: Laptops | Amount ($): 3498.13"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 28\nData: Expense ID: EXP-0027 | Date: 45909 | Department: Operations | Expense Item: Laptops | Amount ($): 3498.13"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 29,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 29\nData: Expense ID: EXP-0028 | Date: 2025-12-20 | Department: Sales | Expense Item: Legal Consultation | Amount ($): 3666"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 29\nData: Expense ID: EXP-0028 | Date: 46011 | Department: Sales | Expense Item: Legal Consultation | Amount ($): 3666"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 30,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 30\nData: Expense ID: EXP-0029 | Date: 2025-08-25 | Department: Operations | Expense Item: Legal Consultation | Amount ($): 3927.64"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 30\nData: Expense ID: EXP-0029 | Date: 45894 | Department: Operations | Expense Item: Legal Consultation | Amount ($): 3927.64"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 31,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 31\nData: Expense ID: EXP-0030 | Date: 2025-06-14 | Department: Sales | Expense Item: Client Dinner | Amount ($): 3326.26"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 31\nData: Expense ID: EXP-0030 | Date: 45822 | Department: Sales | Expense Item: Client Dinner | Amount ($): 3326.26"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 32,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 32\nData: Expense ID: EXP-0031 | Date: 2025-11-20 | Department: Marketing | Expense Item: Server Hosting | Amount ($): 2459.02"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 32\nData: Expense ID: EXP-0031 | Date: 45981 | Department: Marketing | Expense Item: Server Hosting | Amount ($): 2459.02"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 33,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 33\nData: Expense ID: EXP-0032 | Date: 2026-04-08 | Department: HR | Expense Item: Electricity Bill | Amount ($): 989.99"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 33\nData: Expense ID: EXP-0032 | Date: 46120 | Department: HR | Expense Item: Electricity Bill | Amount ($): 989.99"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 34,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 34\nData: Expense ID: EXP-0033 | Date: 2026-01-20 | Department: HR | Expense Item: Online Ads | Amount ($): 1127.62"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 34\nData: Expense ID: EXP-0033 | Date: 46042 | Department: HR | Expense Item: Online Ads | Amount ($): 1127.62"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 35,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 35\nData: Expense ID: EXP-0034 | Date: 2025-04-19 | Department: Operations | Expense Item: Server Hosting | Amount ($): 339.49"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 35\nData: Expense ID: EXP-0034 | Date: 45766 | Department: Operations | Expense Item: Server Hosting | Amount ($): 339.49"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 36,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 36\nData: Expense ID: EXP-0035 | Date: 2025-09-07 | Department: Sales | Expense Item: Airfare | Amount ($): 3691.9"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 36\nData: Expense ID: EXP-0035 | Date: 45907 | Department: Sales | Expense Item: Airfare | Amount ($): 3691.9"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 37,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 37\nData: Expense ID: EXP-0036 | Date: 2025-10-19 | Department: IT | Expense Item: Office Supplies | Amount ($): 351.74"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 37\nData: Expense ID: EXP-0036 | Date: 45949 | Department: IT | Expense Item: Office Supplies | Amount ($): 351.74"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 38,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 38\nData: Expense ID: EXP-0037 | Date: 2025-11-20 | Department: IT | Expense Item: Office Supplies | Amount ($): 1602.34"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 38\nData: Expense ID: EXP-0037 | Date: 45981 | Department: IT | Expense Item: Office Supplies | Amount ($): 1602.34"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 39,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 39\nData: Expense ID: EXP-0038 | Date: 2026-01-22 | Department: IT | Expense Item: Airfare | Amount ($): 298.2"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 39\nData: Expense ID: EXP-0038 | Date: 46044 | Department: IT | Expense Item: Airfare | Amount ($): 298.2"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 40,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 40\nData: Expense ID: EXP-0039 | Date: 2025-12-22 | Department: HR | Expense Item: Client Dinner | Amount ($): 2410.1"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 40\nData: Expense ID: EXP-0039 | Date: 46013 | Department: HR | Expense Item: Client Dinner | Amount ($): 2410.1"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 41,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 41\nData: Expense ID: EXP-0040 | Date: 2025-10-21 | Department: Finance | Expense Item: Software Licenses | Amount ($): 4600.97"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 41\nData: Expense ID: EXP-0040 | Date: 45951 | Department: Finance | Expense Item: Software Licenses | Amount ($): 4600.97"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 42,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 42\nData: Expense ID: EXP-0041 | Date: 2026-02-18 | Department: HR | Expense Item: Event Sponsorship | Amount ($): 2679.07"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 42\nData: Expense ID: EXP-0041 | Date: 46071 | Department: HR | Expense Item: Event Sponsorship | Amount ($): 2679.07"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 43,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 43\nData: Expense ID: EXP-0042 | Date: 2026-02-23 | Department: Finance | Expense Item: Online Ads | Amount ($): 331.55"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 43\nData: Expense ID: EXP-0042 | Date: 46076 | Department: Finance | Expense Item: Online Ads | Amount ($): 331.55"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 44,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 44\nData: Expense ID: EXP-0043 | Date: 2025-09-29 | Department: Sales | Expense Item: Office Supplies | Amount ($): 2563.75"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 44\nData: Expense ID: EXP-0043 | Date: 45929 | Department: Sales | Expense Item: Office Supplies | Amount ($): 2563.75"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 45,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 45\nData: Expense ID: EXP-0044 | Date: 2026-02-21 | Department: Operations | Expense Item: Event Sponsorship | Amount ($): 4264.15"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 45\nData: Expense ID: EXP-0044 | Date: 46074 | Department: Operations | Expense Item: Event Sponsorship | Amount ($): 4264.15"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 46,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 46\nData: Expense ID: EXP-0045 | Date: 2025-10-10 | Department: IT | Expense Item: Office Supplies | Amount ($): 389.18"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 46\nData: Expense ID: EXP-0045 | Date: 45940 | Department: IT | Expense Item: Office Supplies | Amount ($): 389.18"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 47,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 47\nData: Expense ID: EXP-0046 | Date: 2025-10-17 | Department: Sales | Expense Item: Software Licenses | Amount ($): 386.41"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 47\nData: Expense ID: EXP-0046 | Date: 45947 | Department: Sales | Expense Item: Software Licenses | Amount ($): 386.41"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 48,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 48\nData: Expense ID: EXP-0047 | Date: 2025-06-06 | Department: Sales | Expense Item: Airfare | Amount ($): 4316.01"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 48\nData: Expense ID: EXP-0047 | Date: 45814 | Department: Sales | Expense Item: Airfare | Amount ($): 4316.01"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 49,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 49\nData: Expense ID: EXP-0048 | Date: 2025-11-27 | Department: Operations | Expense Item: Training Courses | Amount ($): 2048.69"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 49\nData: Expense ID: EXP-0048 | Date: 45988 | Department: Operations | Expense Item: Training Courses | Amount ($): 2048.69"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 50,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 50\nData: Expense ID: EXP-0049 | Date: 2026-03-20 | Department: Sales | Expense Item: Legal Consultation | Amount ($): 4710.9"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 50\nData: Expense ID: EXP-0049 | Date: 46101 | Department: Sales | Expense Item: Legal Consultation | Amount ($): 4710.9"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 51,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 51\nData: Expense ID: EXP-0050 | Date: 2025-08-19 | Department: Operations | Expense Item: Software Licenses | Amount ($): 2869.89"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 51\nData: Expense ID: EXP-0050 | Date: 45888 | Department: Operations | Expense Item: Software Licenses | Amount ($): 2869.89"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 52,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 52\nData: Expense ID: EXP-0051 | Date: 2025-07-11 | Department: Marketing | Expense Item: Office Supplies | Amount ($): 2915.65"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 52\nData: Expense ID: EXP-0051 | Date: 45849 | Department: Marketing | Expense Item: Office Supplies | Amount ($): 2915.65"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 53,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 53\nData: Expense ID: EXP-0052 | Date: 2026-02-07 | Department: Operations | Expense Item: Airfare | Amount ($): 246.72"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 53\nData: Expense ID: EXP-0052 | Date: 46060 | Department: Operations | Expense Item: Airfare | Amount ($): 246.72"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 54,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 54\nData: Expense ID: EXP-0053 | Date: 2025-09-30 | Department: IT | Expense Item: Electricity Bill | Amount ($): 455.82"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 54\nData: Expense ID: EXP-0053 | Date: 45930 | Department: IT | Expense Item: Electricity Bill | Amount ($): 455.82"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 55,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 55\nData: Expense ID: EXP-0054 | Date: 2026-03-02 | Department: Finance | Expense Item: Software Licenses | Amount ($): 3304"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 55\nData: Expense ID: EXP-0054 | Date: 46083 | Department: Finance | Expense Item: Software Licenses | Amount ($): 3304"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 56,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 56\nData: Expense ID: EXP-0055 | Date: 2025-07-03 | Department: Finance | Expense Item: Internet Bill | Amount ($): 2847.87"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 56\nData: Expense ID: EXP-0055 | Date: 45841 | Department: Finance | Expense Item: Internet Bill | Amount ($): 2847.87"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 57,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 57\nData: Expense ID: EXP-0056 | Date: 2025-11-12 | Department: IT | Expense Item: Client Dinner | Amount ($): 1616.03"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 57\nData: Expense ID: EXP-0056 | Date: 45973 | Department: IT | Expense Item: Client Dinner | Amount ($): 1616.03"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 58,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 58\nData: Expense ID: EXP-0057 | Date: 2025-05-25 | Department: Finance | Expense Item: Airfare | Amount ($): 1340.79"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 58\nData: Expense ID: EXP-0057 | Date: 45802 | Department: Finance | Expense Item: Airfare | Amount ($): 1340.79"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 59,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 59\nData: Expense ID: EXP-0058 | Date: 2025-05-30 | Department: Operations | Expense Item: Online Ads | Amount ($): 3365.14"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 59\nData: Expense ID: EXP-0058 | Date: 45807 | Department: Operations | Expense Item: Online Ads | Amount ($): 3365.14"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 60,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 60\nData: Expense ID: EXP-0059 | Date: 2025-10-08 | Department: Marketing | Expense Item: Office Supplies | Amount ($): 1605.21"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 60\nData: Expense ID: EXP-0059 | Date: 45938 | Department: Marketing | Expense Item: Office Supplies | Amount ($): 1605.21"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 61,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 61\nData: Expense ID: EXP-0060 | Date: 2025-06-20 | Department: Finance | Expense Item: Team Lunch | Amount ($): 1364.79"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 61\nData: Expense ID: EXP-0060 | Date: 45828 | Department: Finance | Expense Item: Team Lunch | Amount ($): 1364.79"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 62,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 62\nData: Expense ID: EXP-0061 | Date: 2026-01-03 | Department: Marketing | Expense Item: Legal Consultation | Amount ($): 697.85"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 62\nData: Expense ID: EXP-0061 | Date: 46025 | Department: Marketing | Expense Item: Legal Consultation | Amount ($): 697.85"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 63,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 63\nData: Expense ID: EXP-0062 | Date: 2025-04-16 | Department: IT | Expense Item: Server Hosting | Amount ($): 3245.23"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 63\nData: Expense ID: EXP-0062 | Date: 45763 | Department: IT | Expense Item: Server Hosting | Amount ($): 3245.23"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 64,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 64\nData: Expense ID: EXP-0063 | Date: 2026-03-07 | Department: Marketing | Expense Item: Office Supplies | Amount ($): 2313.26"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 64\nData: Expense ID: EXP-0063 | Date: 46088 | Department: Marketing | Expense Item: Office Supplies | Amount ($): 2313.26"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 65,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 65\nData: Expense ID: EXP-0064 | Date: 2026-03-19 | Department: Sales | Expense Item: Online Ads | Amount ($): 4648.64"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 65\nData: Expense ID: EXP-0064 | Date: 46100 | Department: Sales | Expense Item: Online Ads | Amount ($): 4648.64"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 66,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 66\nData: Expense ID: EXP-0065 | Date: 2025-05-08 | Department: HR | Expense Item: Hotel Accommodation | Amount ($): 4681.88"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 66\nData: Expense ID: EXP-0065 | Date: 45785 | Department: HR | Expense Item: Hotel Accommodation | Amount ($): 4681.88"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 67,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 67\nData: Expense ID: EXP-0066 | Date: 2025-12-16 | Department: Sales | Expense Item: Training Courses | Amount ($): 96.11"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 67\nData: Expense ID: EXP-0066 | Date: 46007 | Department: Sales | Expense Item: Training Courses | Amount ($): 96.11"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 68,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 68\nData: Expense ID: EXP-0067 | Date: 2025-11-14 | Department: IT | Expense Item: Electricity Bill | Amount ($): 3124.74"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 68\nData: Expense ID: EXP-0067 | Date: 45975 | Department: IT | Expense Item: Electricity Bill | Amount ($): 3124.74"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 69,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 69\nData: Expense ID: EXP-0068 | Date: 2026-03-02 | Department: Finance | Expense Item: Electricity Bill | Amount ($): 2836.82"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 69\nData: Expense ID: EXP-0068 | Date: 46083 | Department: Finance | Expense Item: Electricity Bill | Amount ($): 2836.82"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 70,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 70\nData: Expense ID: EXP-0069 | Date: 2025-12-13 | Department: Finance | Expense Item: Event Sponsorship | Amount ($): 544.91"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 70\nData: Expense ID: EXP-0069 | Date: 46004 | Department: Finance | Expense Item: Event Sponsorship | Amount ($): 544.91"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 71,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 71\nData: Expense ID: EXP-0070 | Date: 2026-02-19 | Department: Marketing | Expense Item: Event Sponsorship | Amount ($): 2711.29"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 71\nData: Expense ID: EXP-0070 | Date: 46072 | Department: Marketing | Expense Item: Event Sponsorship | Amount ($): 2711.29"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 72,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 72\nData: Expense ID: EXP-0071 | Date: 2025-09-29 | Department: Operations | Expense Item: Server Hosting | Amount ($): 2554.13"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 72\nData: Expense ID: EXP-0071 | Date: 45929 | Department: Operations | Expense Item: Server Hosting | Amount ($): 2554.13"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 73,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 73\nData: Expense ID: EXP-0072 | Date: 2025-11-20 | Department: HR | Expense Item: Office Supplies | Amount ($): 705.66"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 73\nData: Expense ID: EXP-0072 | Date: 45981 | Department: HR | Expense Item: Office Supplies | Amount ($): 705.66"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 74,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 74\nData: Expense ID: EXP-0073 | Date: 2025-08-22 | Department: Operations | Expense Item: Pantry Supplies | Amount ($): 1777.59"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 74\nData: Expense ID: EXP-0073 | Date: 45891 | Department: Operations | Expense Item: Pantry Supplies | Amount ($): 1777.59"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 75,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 75\nData: Expense ID: EXP-0074 | Date: 2025-05-21 | Department: IT | Expense Item: Server Hosting | Amount ($): 390.52"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 75\nData: Expense ID: EXP-0074 | Date: 45798 | Department: IT | Expense Item: Server Hosting | Amount ($): 390.52"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 76,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 76\nData: Expense ID: EXP-0075 | Date: 2025-10-07 | Department: Finance | Expense Item: Pantry Supplies | Amount ($): 1259.21"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 76\nData: Expense ID: EXP-0075 | Date: 45937 | Department: Finance | Expense Item: Pantry Supplies | Amount ($): 1259.21"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 77,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 77\nData: Expense ID: EXP-0076 | Date: 2026-01-18 | Department: Marketing | Expense Item: Laptops | Amount ($): 1460.69"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 77\nData: Expense ID: EXP-0076 | Date: 46040 | Department: Marketing | Expense Item: Laptops | Amount ($): 1460.69"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 78,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 78\nData: Expense ID: EXP-0077 | Date: 2025-10-04 | Department: Finance | Expense Item: Office Supplies | Amount ($): 2219.01"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 78\nData: Expense ID: EXP-0077 | Date: 45934 | Department: Finance | Expense Item: Office Supplies | Amount ($): 2219.01"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 79,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 79\nData: Expense ID: EXP-0078 | Date: 2025-10-12 | Department: Operations | Expense Item: Airfare | Amount ($): 2738.93"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 79\nData: Expense ID: EXP-0078 | Date: 45942 | Department: Operations | Expense Item: Airfare | Amount ($): 2738.93"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 80,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 80\nData: Expense ID: EXP-0079 | Date: 2025-12-25 | Department: Operations | Expense Item: Airfare | Amount ($): 1547.46"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 80\nData: Expense ID: EXP-0079 | Date: 46016 | Department: Operations | Expense Item: Airfare | Amount ($): 1547.46"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 81,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 81\nData: Expense ID: EXP-0080 | Date: 2025-05-03 | Department: HR | Expense Item: Legal Consultation | Amount ($): 4920.07"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 81\nData: Expense ID: EXP-0080 | Date: 45780 | Department: HR | Expense Item: Legal Consultation | Amount ($): 4920.07"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 82,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 82\nData: Expense ID: EXP-0081 | Date: 2025-11-26 | Department: HR | Expense Item: Laptops | Amount ($): 4045.14"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 82\nData: Expense ID: EXP-0081 | Date: 45987 | Department: HR | Expense Item: Laptops | Amount ($): 4045.14"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 83,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 83\nData: Expense ID: EXP-0082 | Date: 2025-04-17 | Department: Marketing | Expense Item: Client Dinner | Amount ($): 2668.26"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 83\nData: Expense ID: EXP-0082 | Date: 45764 | Department: Marketing | Expense Item: Client Dinner | Amount ($): 2668.26"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 84,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 84\nData: Expense ID: EXP-0083 | Date: 2025-04-27 | Department: HR | Expense Item: Laptops | Amount ($): 3355.92"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 84\nData: Expense ID: EXP-0083 | Date: 45774 | Department: HR | Expense Item: Laptops | Amount ($): 3355.92"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 85,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 85\nData: Expense ID: EXP-0084 | Date: 2025-05-15 | Department: Operations | Expense Item: Laptops | Amount ($): 2795.28"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 85\nData: Expense ID: EXP-0084 | Date: 45792 | Department: Operations | Expense Item: Laptops | Amount ($): 2795.28"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 86,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 86\nData: Expense ID: EXP-0085 | Date: 2026-03-06 | Department: Operations | Expense Item: Server Hosting | Amount ($): 4662.19"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 86\nData: Expense ID: EXP-0085 | Date: 46087 | Department: Operations | Expense Item: Server Hosting | Amount ($): 4662.19"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 87,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 87\nData: Expense ID: EXP-0086 | Date: 2025-06-04 | Department: IT | Expense Item: Internet Bill | Amount ($): 562.75"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 87\nData: Expense ID: EXP-0086 | Date: 45812 | Department: IT | Expense Item: Internet Bill | Amount ($): 562.75"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 88,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 88\nData: Expense ID: EXP-0087 | Date: 2025-05-21 | Department: Operations | Expense Item: Training Courses | Amount ($): 4396.73"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 88\nData: Expense ID: EXP-0087 | Date: 45798 | Department: Operations | Expense Item: Training Courses | Amount ($): 4396.73"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 89,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 89\nData: Expense ID: EXP-0088 | Date: 2026-01-14 | Department: Marketing | Expense Item: Software Licenses | Amount ($): 1359.11"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 89\nData: Expense ID: EXP-0088 | Date: 46036 | Department: Marketing | Expense Item: Software Licenses | Amount ($): 1359.11"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 90,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 90\nData: Expense ID: EXP-0089 | Date: 2025-07-12 | Department: Sales | Expense Item: Legal Consultation | Amount ($): 4454.08"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 90\nData: Expense ID: EXP-0089 | Date: 45850 | Department: Sales | Expense Item: Legal Consultation | Amount ($): 4454.08"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 91,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 91\nData: Expense ID: EXP-0090 | Date: 2025-12-07 | Department: IT | Expense Item: Legal Consultation | Amount ($): 3724.96"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 91\nData: Expense ID: EXP-0090 | Date: 45998 | Department: IT | Expense Item: Legal Consultation | Amount ($): 3724.96"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 92,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 92\nData: Expense ID: EXP-0091 | Date: 2026-01-18 | Department: IT | Expense Item: Legal Consultation | Amount ($): 819.47"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 92\nData: Expense ID: EXP-0091 | Date: 46040 | Department: IT | Expense Item: Legal Consultation | Amount ($): 819.47"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 93,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 93\nData: Expense ID: EXP-0092 | Date: 2025-08-18 | Department: Marketing | Expense Item: Airfare | Amount ($): 1444.69"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 93\nData: Expense ID: EXP-0092 | Date: 45887 | Department: Marketing | Expense Item: Airfare | Amount ($): 1444.69"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 94,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 94\nData: Expense ID: EXP-0093 | Date: 2025-09-29 | Department: Marketing | Expense Item: Software Licenses | Amount ($): 1092.62"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 94\nData: Expense ID: EXP-0093 | Date: 45929 | Department: Marketing | Expense Item: Software Licenses | Amount ($): 1092.62"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 95,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 95\nData: Expense ID: EXP-0094 | Date: 2025-11-24 | Department: HR | Expense Item: Laptops | Amount ($): 1747.26"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 95\nData: Expense ID: EXP-0094 | Date: 45985 | Department: HR | Expense Item: Laptops | Amount ($): 1747.26"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 96,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 96\nData: Expense ID: EXP-0095 | Date: 2025-05-19 | Department: IT | Expense Item: Training Courses | Amount ($): 3453.11"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 96\nData: Expense ID: EXP-0095 | Date: 45796 | Department: IT | Expense Item: Training Courses | Amount ($): 3453.11"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 97,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 97\nData: Expense ID: EXP-0096 | Date: 2025-04-24 | Department: HR | Expense Item: Client Dinner | Amount ($): 4271.92"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 97\nData: Expense ID: EXP-0096 | Date: 45771 | Department: HR | Expense Item: Client Dinner | Amount ($): 4271.92"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 98,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 98\nData: Expense ID: EXP-0097 | Date: 2025-06-30 | Department: Operations | Expense Item: Pantry Supplies | Amount ($): 2551.77"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 98\nData: Expense ID: EXP-0097 | Date: 45838 | Department: Operations | Expense Item: Pantry Supplies | Amount ($): 2551.77"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 99,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 99\nData: Expense ID: EXP-0098 | Date: 2025-12-20 | Department: IT | Expense Item: Internet Bill | Amount ($): 1293.05"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 99\nData: Expense ID: EXP-0098 | Date: 46011 | Department: IT | Expense Item: Internet Bill | Amount ($): 1293.05"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 100,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 100\nData: Expense ID: EXP-0099 | Date: 2025-04-26 | Department: IT | Expense Item: Airfare | Amount ($): 4545.39"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 100\nData: Expense ID: EXP-0099 | Date: 45773 | Department: IT | Expense Item: Airfare | Amount ($): 4545.39"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
       "filename": "expense_sheet.xlsx",
       "sheet_name": "Sheet1",
       "row_number": 101,
-      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 101\nData: Expense ID: EXP-0100 | Date: 2025-10-27 | Department: Finance | Expense Item: Office Supplies | Amount ($): 301.45"
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 101\nData: Expense ID: EXP-0100 | Date: 45957 | Department: Finance | Expense Item: Office Supplies | Amount ($): 301.45"
     },
     {
       "file_id": "00e83810-7d86-4bfb-8983-a3732132aaa6",
@@ -7329,6 +7329,13 @@
     {
       "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
       "filename": "expense_sheet.xlsx",
+      "sheet_name": "Sheet1",
+      "row_number": 9,
+      "text": "File: expense_sheet.xlsx\nSheet: Sheet1\nExcel Row: 9\nData: Expense ID: DUMMY_ID | Date: 46128 | Department: Dummy Department | Expense Item: Dummy Item | Amount ($): 123.45"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
       "sheet_name": "Analysis",
       "row_number": null,
       "text": "File: expense_sheet.xlsx\nSheet: Analysis\nHeader Row: 1\nColumns: Expense ID, Date, Department, Expense Item, Amount ($)"
@@ -7381,6 +7388,125 @@
       "sheet_name": "Analysis",
       "row_number": 8,
       "text": "File: expense_sheet.xlsx\nSheet: Analysis\nExcel Row: 8\nData: Expense ID: EXP-0001 | Date: 12/29/2026 | Department: Media | Expense Item: Remote | Amount ($): 20000"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Analysis1",
+      "row_number": null,
+      "text": "File: expense_sheet.xlsx\nSheet: Analysis1\nHeader Row: 1\nColumns: Expense ID, Date, Department, Expense Item, Amount ($)"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Analysis1",
+      "row_number": 2,
+      "text": "File: expense_sheet.xlsx\nSheet: Analysis1\nExcel Row: 2\nData: Expense ID: EXP-0001 | Date: 45796 | Department: IT | Expense Item: Server Hosting | Amount ($): 998.37"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Analysis1",
+      "row_number": 3,
+      "text": "File: expense_sheet.xlsx\nSheet: Analysis1\nExcel Row: 3\nData: Expense ID: EXP-0002 | Date: 46066 | Department: HR | Expense Item: Internet Bill | Amount ($): 2704.61"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Analysis1",
+      "row_number": 4,
+      "text": "File: expense_sheet.xlsx\nSheet: Analysis1\nExcel Row: 4\nData: Expense ID: EXP-0004 | Date: 45983 | Department: Marketing | Expense Item: Pantry Supplies | Amount ($): 958.27"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Analysis1",
+      "row_number": 5,
+      "text": "File: expense_sheet.xlsx\nSheet: Analysis1\nExcel Row: 5\nData: Expense ID: EXP-0005 | Date: 45998 | Department: Sales | Expense Item: Online Ads | Amount ($): 2340.01"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Analysis1",
+      "row_number": 6,
+      "text": "File: expense_sheet.xlsx\nSheet: Analysis1\nExcel Row: 6\nData: Expense ID: EXP-0009 | Date: 45777 | Department: Operations | Expense Item: Legal Consultation | Amount ($): 4287.04"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Analysis1",
+      "row_number": 7,
+      "text": "File: expense_sheet.xlsx\nSheet: Analysis1\nExcel Row: 7\nData: Expense ID: EXP-0010 | Date: 45844 | Department: Finance | Expense Item: Server Hosting | Amount ($): 534.65"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Analysis1",
+      "row_number": 8,
+      "text": "File: expense_sheet.xlsx\nSheet: Analysis1\nExcel Row: 8\nData: Expense ID: EXP-0001 | Date: 12/29/2026 | Department: Media | Expense Item: Remote | Amount ($): 20000"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Pivot_Sheet1",
+      "row_number": null,
+      "text": "File: expense_sheet.xlsx\nSheet: Pivot_Sheet1\nHeader Row: 1\nColumns: Department, Amount ($)"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Pivot_Sheet1",
+      "row_number": 2,
+      "text": "File: expense_sheet.xlsx\nSheet: Pivot_Sheet1\nExcel Row: 2\nData: Department: Dummy Department | Amount ($): 123.45"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Pivot_Sheet1",
+      "row_number": 3,
+      "text": "File: expense_sheet.xlsx\nSheet: Pivot_Sheet1\nExcel Row: 3\nData: Department: Finance | Amount ($): 534.65"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Pivot_Sheet1",
+      "row_number": 4,
+      "text": "File: expense_sheet.xlsx\nSheet: Pivot_Sheet1\nExcel Row: 4\nData: Department: HR | Amount ($): 2704.61"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Pivot_Sheet1",
+      "row_number": 5,
+      "text": "File: expense_sheet.xlsx\nSheet: Pivot_Sheet1\nExcel Row: 5\nData: Department: IT | Amount ($): 998.37"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Pivot_Sheet1",
+      "row_number": 6,
+      "text": "File: expense_sheet.xlsx\nSheet: Pivot_Sheet1\nExcel Row: 6\nData: Department: Marketing | Amount ($): 958.27"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Pivot_Sheet1",
+      "row_number": 7,
+      "text": "File: expense_sheet.xlsx\nSheet: Pivot_Sheet1\nExcel Row: 7\nData: Department: Media | Amount ($): 20000"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Pivot_Sheet1",
+      "row_number": 8,
+      "text": "File: expense_sheet.xlsx\nSheet: Pivot_Sheet1\nExcel Row: 8\nData: Department: Operations | Amount ($): 4287.04"
+    },
+    {
+      "file_id": "a73fd380-97d3-4dee-bcf7-5609c76e4fe5",
+      "filename": "expense_sheet.xlsx",
+      "sheet_name": "Pivot_Sheet1",
+      "row_number": 9,
+      "text": "File: expense_sheet.xlsx\nSheet: Pivot_Sheet1\nExcel Row: 9\nData: Department: Sales | Amount ($): 2340.01"
     },
     {
       "file_id": "c18d89e7-87ef-47e6-8832-6753a88dff55",

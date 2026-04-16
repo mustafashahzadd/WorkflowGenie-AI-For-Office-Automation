@@ -527,13 +527,38 @@ class MCPService:
         filepath = self._get_filepath(file_id)
         wb = openpyxl.load_workbook(filepath)
         
-        sheets = []
+        sheet_names: List[str] = []
+        sheet_details: List[Dict[str, Any]] = []
+        total_rows = 0
+        total_columns = 0
+        total_embedded_charts = 0
+
         for ws in wb.worksheets:
-            sheets.append({
+            chart_count = len(getattr(ws, "_charts", []))
+            total_embedded_charts += chart_count
+
+            raw_used_range = ws.calculate_dimension() if ws.max_row and ws.max_column else None
+            is_empty_sheet = raw_used_range == "A1:A1" and ws["A1"].value in (None, "")
+
+            row_count = 0 if is_empty_sheet else ws.max_row
+            column_count = 0 if is_empty_sheet else ws.max_column
+            used_range = None if is_empty_sheet else raw_used_range
+
+            total_rows += row_count
+            total_columns = max(total_columns, column_count)
+            sheet_names.append(ws.title)
+
+            sheet_details.append({
                 "name": ws.title,
-                "row_count": ws.max_row,
-                "column_count": ws.max_column
+                "row_count": row_count,
+                "column_count": column_count,
+                "used_range": used_range,
+                "is_empty": is_empty_sheet,
+                "chart_count": chart_count,
+                "has_charts": chart_count > 0,
             })
+
+        chartsheet_count = len(getattr(wb, "chartsheets", []))
         
         file_stats = filepath.stat()
         
@@ -542,9 +567,17 @@ class MCPService:
             "filename": filepath.name,
             "filepath": str(filepath),
             "size": file_stats.st_size,
-            "created": file_stats.st_ctime,
+            "created": file_stats.st_birthtime,
             "modified": file_stats.st_mtime,
-            "sheets": sheets
+            "sheets": sheet_names,
+            "sheet_names": sheet_names,
+            "sheet_details": sheet_details,
+            "total_sheets": len(sheet_names),
+            "total_rows": total_rows,
+            "total_columns": total_columns,
+            "embedded_chart_count": total_embedded_charts,
+            "chartsheet_count": chartsheet_count,
+            "has_charts": (total_embedded_charts + chartsheet_count) > 0,
         }
     
     async def update_by_search(
@@ -1874,6 +1907,7 @@ class MCPService:
         return {
             "file_id": file_id,
             "pivot_sheet": pivot_sheet_name,
+            "sheet_name": pivot_sheet_name,
             "rows_count": len(pivot_reset),
             "columns_count": len(pivot_reset.columns),
             "message": f"Created pivot table in sheet '{pivot_sheet_name}' with {len(pivot_reset)} rows"

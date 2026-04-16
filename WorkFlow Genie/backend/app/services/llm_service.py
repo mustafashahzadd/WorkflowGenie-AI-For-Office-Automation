@@ -3,7 +3,7 @@ LLM Service - ENHANCED WITH STUDENT DEMO EXAMPLES
 Comprehensive prompts with real demo scenarios
 """
 
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 import json
 import re
 from loguru import logger
@@ -449,6 +449,34 @@ Generate a concise summary (2-4 sentences only):
         if chart_summaries:
           message_parts.extend(chart_summaries)
 
+        metadata_payload: Optional[Dict[str, Any]] = None
+        for item in successful_results:
+          if item.get("tool") == "get_file_metadata" and isinstance(item.get("result"), dict):
+            metadata_payload = item["result"]
+            break
+
+        if metadata_payload:
+          metadata_summary = self._summarize_file_metadata(metadata_payload)
+          if metadata_summary:
+            message_parts.append(metadata_summary)
+
+        aggregate_tools = {
+          "calculate_aggregate",
+          "conditional_aggregate",
+        }
+        for item in successful_results:
+          tool_name = str(item.get("tool", "")).strip().lower()
+          if tool_name not in aggregate_tools:
+            continue
+
+          aggregate_result = item.get("result")
+          if not isinstance(aggregate_result, dict):
+            continue
+
+          aggregate_summary = self._summarize_aggregate_result(aggregate_result)
+          if aggregate_summary:
+            message_parts.append(aggregate_summary)
+
         # For read-only questions, include concrete values from retrieved data.
         step_by_number = {
           step.get("step"): step
@@ -616,6 +644,186 @@ Generate a concise summary (2-4 sentences only):
         "column": target_name or candidates[0],
         "values": unique_values,
       }
+
+    def _summarize_file_metadata(
+      self,
+      metadata_payload: Dict[str, Any],
+    ) -> Optional[str]:
+      """Build a concise natural-language summary from get_file_metadata output."""
+
+      if not isinstance(metadata_payload, dict):
+        return None
+
+      sheet_names_raw = metadata_payload.get("sheet_names", metadata_payload.get("sheets", []))
+      sheet_names = [s for s in sheet_names_raw if isinstance(s, str)] if isinstance(sheet_names_raw, list) else []
+
+      total_sheets = metadata_payload.get("total_sheets")
+      if total_sheets is None and sheet_names:
+        total_sheets = len(sheet_names)
+
+      total_rows = metadata_payload.get("total_rows")
+      total_columns = metadata_payload.get("total_columns")
+
+      has_charts = bool(metadata_payload.get("has_charts"))
+      embedded_chart_count = int(metadata_payload.get("embedded_chart_count") or 0)
+      chartsheet_count = int(metadata_payload.get("chartsheet_count") or 0)
+
+      chart_sheet_summaries: List[str] = []
+      sheet_details = metadata_payload.get("sheet_details")
+      if isinstance(sheet_details, list):
+        for detail in sheet_details:
+          if not isinstance(detail, dict):
+            continue
+
+          chart_count = detail.get("chart_count")
+          try:
+            chart_count_int = int(chart_count or 0)
+          except (TypeError, ValueError):
+            chart_count_int = 0
+
+          if chart_count_int <= 0:
+            continue
+
+          sheet_name = detail.get("name")
+          if isinstance(sheet_name, str) and sheet_name.strip():
+            chart_sheet_summaries.append(f"{sheet_name} ({chart_count_int})")
+
+      parts: List[str] = []
+
+      if isinstance(total_sheets, int):
+        if sheet_names:
+          preview = ", ".join(sheet_names[:10])
+          more = f", ... (+{len(sheet_names) - 10} more)" if len(sheet_names) > 10 else ""
+          parts.append(f"Workbook has {total_sheets} sheet(s): {preview}{more}.")
+        else:
+          parts.append(f"Workbook has {total_sheets} sheet(s).")
+
+      if isinstance(total_rows, int) and isinstance(total_columns, int):
+        parts.append(
+          f"Total rows across sheets: {total_rows}. Maximum column count in a sheet: {total_columns}."
+        )
+
+      if has_charts:
+        parts.append(
+          f"Charts detected: {embedded_chart_count} embedded chart(s) and {chartsheet_count} chart sheet(s)."
+        )
+        if chart_sheet_summaries:
+          parts.append(f"Sheets with embedded charts: {', '.join(chart_sheet_summaries)}.")
+      else:
+        parts.append("No charts detected in this workbook.")
+
+      if not parts:
+        return None
+
+      return " ".join(parts)
+
+    def _summarize_aggregate_result(
+      self,
+      aggregate_payload: Dict[str, Any],
+    ) -> Optional[str]:
+      """Build a concise summary from aggregate tool output."""
+
+      if not isinstance(aggregate_payload, dict):
+        return None
+
+      operation = aggregate_payload.get("operation") or aggregate_payload.get("aggregation")
+      operation_name = str(operation).strip() if operation is not None else "aggregate"
+
+      value_column = aggregate_payload.get("column") or aggregate_payload.get("value_column")
+      value_column_name = str(value_column).strip() if value_column is not None else "value"
+
+      group_column = aggregate_payload.get("group_by") or aggregate_payload.get("group_column")
+      group_column_name = str(group_column).strip() if group_column is not None else None
+
+      grouped_results = aggregate_payload.get("results")
+      if isinstance(grouped_results, dict) and grouped_results:
+        pairs: List[str] = []
+        for key, value in grouped_results.items():
+          label = str(key).strip() if key is not None else "(blank)"
+          pairs.append(f"{label}={self._format_scalar(value)}")
+
+        preview_limit = 15
+        preview = ", ".join(pairs[:preview_limit])
+        remaining_count = max(0, len(pairs) - preview_limit)
+        tail = f", ... (+{remaining_count} more)" if remaining_count else ""
+
+        if group_column_name:
+          base_summary = (
+            f"{operation_name.capitalize()} of {value_column_name} by {group_column_name}: "
+            f"{preview}{tail}."
+          )
+        else:
+          base_summary = f"{operation_name.capitalize()} results: {preview}{tail}."
+
+        highest_group_summary = self._summarize_highest_group(
+          grouped_results=grouped_results,
+          operation_name=operation_name,
+          value_column_name=value_column_name,
+          group_column_name=group_column_name,
+        )
+
+        if highest_group_summary:
+          return f"{base_summary} {highest_group_summary}"
+
+        return base_summary
+
+      if "result" in aggregate_payload:
+        scalar_result = self._format_scalar(aggregate_payload.get("result"))
+        return f"{operation_name.capitalize()} of {value_column_name}: {scalar_result}."
+
+      return None
+
+    def _format_scalar(self, value: Any) -> str:
+      """Format scalar values for concise response text."""
+
+      if isinstance(value, float):
+        formatted = f"{value:.4f}".rstrip("0").rstrip(".")
+        return formatted if formatted else "0"
+
+      if value is None:
+        return "None"
+
+      return str(value)
+
+    def _summarize_highest_group(
+      self,
+      grouped_results: Dict[Any, Any],
+      operation_name: str,
+      value_column_name: str,
+      group_column_name: Optional[str],
+    ) -> Optional[str]:
+      """Return the highest-value group for grouped aggregate results."""
+
+      if not isinstance(grouped_results, dict) or not grouped_results:
+        return None
+
+      numeric_results: List[Tuple[str, float]] = []
+      for key, value in grouped_results.items():
+        label = str(key).strip() if key is not None else "(blank)"
+        try:
+          numeric_value = float(value)
+        except (TypeError, ValueError):
+          continue
+        numeric_results.append((label, numeric_value))
+
+      if not numeric_results:
+        return None
+
+      normalized_operation = operation_name.lower().strip()
+      if normalized_operation == "min":
+        best_label, best_value = min(numeric_results, key=lambda item: item[1])
+        qualifier = "lowest"
+      else:
+        best_label, best_value = max(numeric_results, key=lambda item: item[1])
+        qualifier = "highest"
+
+      group_label = group_column_name or "group"
+      operation_fragment = normalized_operation if normalized_operation else "aggregate"
+
+      return (
+        f"{group_label.capitalize()} with {qualifier} {operation_fragment} {value_column_name}: "
+        f"{best_label} ({self._format_scalar(best_value)})."
+      )
     
     def _build_system_prompt(self, session_summary: Optional[str] = None) -> str:
         """Build system prompt for general conversation"""
@@ -872,7 +1080,9 @@ Rule 1: bulk_update vs bulk_update_all
 Rule 2: Calculate Operations
 - "calculate total", "sum of marks" → calculate_column with SUM
 - "calculate average" → calculate_column with AVERAGE
-- "find highest" → calculate_aggregate with max
+- "find highest value in <numeric column>" → calculate_aggregate with max (no group_by)
+- "highest spending department" / "department with max amount spent" → aggregate by department/category using sum, then return the top group
+- "maximum amount by each department" → calculate_aggregate with operation=max and group_by=Department
 - "descriptive statistics", "stats" → descriptive_stats
 
 Rule 3: Grade Assignment

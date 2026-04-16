@@ -590,6 +590,58 @@ async def _handle_excel_operation(
                             f"Updated downstream steps to use copied sheet '{actual_sheet}' "
                             f"instead of requested '{requested_sheet}'"
                         )
+
+                if result["success"] and step.get("tool") == "pivot_table":
+                    step_params = step.get("parameters", {})
+                    result_data = result.get("data") if isinstance(result.get("data"), dict) else {}
+
+                    source_sheet = step_params.get("sheet_name") if isinstance(step_params, dict) else None
+                    actual_pivot_sheet = result_data.get("pivot_sheet") or result_data.get("sheet_name")
+
+                    if isinstance(actual_pivot_sheet, str) and actual_pivot_sheet.strip():
+                        pivot_aliases = {
+                            "PivotTable",
+                            "Pivot_Table",
+                            "Pivot Sheet",
+                            "pivottable",
+                            "pivot_table",
+                            "pivot sheet",
+                            actual_pivot_sheet,
+                        }
+
+                        if isinstance(source_sheet, str) and source_sheet.strip():
+                            pivot_aliases.add(f"Pivot_{source_sheet}"[:31])
+
+                        normalized_aliases = {
+                            alias.strip().lower()
+                            for alias in pivot_aliases
+                            if isinstance(alias, str) and alias.strip()
+                        }
+
+                        updated_refs = 0
+
+                        for planned_step in plan.get("steps", []):
+                            if planned_step.get("step", 0) <= step.get("step", 0):
+                                continue
+
+                            planned_params = planned_step.get("parameters")
+                            if not isinstance(planned_params, dict):
+                                continue
+
+                            for key in ("sheet_name", "source_sheet", "target_sheet"):
+                                current_value = planned_params.get(key)
+                                if not isinstance(current_value, str):
+                                    continue
+
+                                if current_value.strip().lower() in normalized_aliases and current_value != actual_pivot_sheet:
+                                    planned_params[key] = actual_pivot_sheet
+                                    updated_refs += 1
+
+                        if updated_refs > 0:
+                            logger.info(
+                                f"Updated {updated_refs} downstream sheet reference(s) to actual pivot sheet "
+                                f"'{actual_pivot_sheet}'"
+                            )
                 
                 # Broadcast completion
                 await ws_manager.broadcast({
