@@ -5,6 +5,7 @@ Comprehensive prompts with real demo scenarios
 
 from typing import List, Dict, Optional, Any
 import json
+import re
 from loguru import logger
 from datetime import datetime
 
@@ -195,29 +196,76 @@ class LLMService:
                 )
                 response_text = self._extract_claude_text(response) or "{}"
 
-            # Clean JSON
-            response_text = response_text.strip()
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.startswith("```"):
-                response_text = response_text[3:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
-            response_text = response_text.strip()
-
-            plan = json.loads(response_text)
+            plan = self._parse_plan_response(response_text)
 
             logger.info(f"Generated plan with {len(plan.get('steps', []))} steps")
 
             return plan
 
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error: {e}")
+        except ValueError as e:
+            logger.error(f"Plan parse error: {e}")
             logger.error(f"Response was: {response_text}")
             raise Exception("Failed to parse operation plan")
         except Exception as e:
             logger.error(f"Planning error ({active_provider}): {e}")
             raise Exception(f"Failed to plan operations: {str(e)}")
+
+    def _parse_plan_response(self, response_text: str) -> Dict[str, Any]:
+        """Parse planner output robustly even if the model adds wrapper text."""
+
+        cleaned_response = (response_text or "").strip()
+        if not cleaned_response:
+            raise ValueError("Planner returned empty response")
+
+        candidates: List[str] = [cleaned_response]
+
+        fenced_blocks = re.findall(
+            r"```(?:json)?\s*([\s\S]*?)```",
+            cleaned_response,
+            flags=re.IGNORECASE,
+        )
+        for block in fenced_blocks:
+            block = block.strip()
+            if block:
+                candidates.append(block)
+
+        first_brace = cleaned_response.find("{")
+        last_brace = cleaned_response.rfind("}")
+        if first_brace != -1 and last_brace > first_brace:
+            candidates.append(cleaned_response[first_brace : last_brace + 1].strip())
+
+        last_error: Optional[Exception] = None
+        seen = set()
+
+        for candidate in candidates:
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+
+            parse_variants = [candidate]
+            stripped_trailing_commas = re.sub(r",\s*([}\]])", r"\1", candidate)
+            if stripped_trailing_commas != candidate:
+                parse_variants.append(stripped_trailing_commas)
+
+            for variant in parse_variants:
+                try:
+                    parsed = json.loads(variant)
+                except Exception as exc:
+                    last_error = exc
+                    continue
+
+                if not isinstance(parsed, dict):
+                    last_error = ValueError("Planner output must be a JSON object")
+                    continue
+
+                steps = parsed.get("steps")
+                if not isinstance(steps, list):
+                    last_error = ValueError("Planner output must contain a 'steps' list")
+                    continue
+
+                return parsed
+
+        raise ValueError(f"Unable to parse planner JSON: {last_error}")
 
     def generate_session_summary(
         self,
@@ -356,7 +404,6 @@ Generate a concise summary (2-4 sentences only):
     ) -> str:
       """Format operation results into a deterministic, execution-grounded response."""
 
-      _ = steps  # Kept for backward-compatible signature.
       _ = provider
 
       if not results:
@@ -372,6 +419,91 @@ Generate a concise summary (2-4 sentences only):
         message_parts.append(
           f"I completed {len(successful_results)} operation(s) successfully: {', '.join(successful_tools)}."
         )
+
+        chart_tools = {
+          "create_bar_chart",
+          "create_line_chart",
+          "create_pie_chart",
+          "create_scatter_plot",
+        }
+
+        chart_summaries: List[str] = []
+        for item in successful_results:
+          tool_name = str(item.get("tool", "")).strip().lower()
+          if tool_name not in chart_tools:
+            continue
+
+          chart_result = item.get("result")
+          if not isinstance(chart_result, dict):
+            continue
+
+          chart_sheet = chart_result.get("sheet_name")
+          chart_position = chart_result.get("position")
+          chart_kind = chart_result.get("chart_type") or tool_name.replace("create_", "").replace("_", " ")
+
+          if chart_sheet and chart_position:
+            chart_summaries.append(
+              f"Created {chart_kind} chart on sheet '{chart_sheet}' at {chart_position}."
+            )
+
+        if chart_summaries:
+          message_parts.extend(chart_summaries)
+
+        # For read-only questions, include concrete values from retrieved data.
+        step_by_number = {
+          step.get("step"): step
+          for step in steps
+          if isinstance(step, dict) and step.get("step") is not None
+        }
+
+        read_data_payload: Optional[Dict[str, Any]] = None
+        for item in successful_results:
+          if item.get("tool") == "read_data" and isinstance(item.get("result"), dict):
+            read_data_payload = item["result"]
+            break
+
+        if read_data_payload:
+          preferred_columns: List[str] = []
+
+          for item in successful_results:
+            if item.get("tool") != "remove_duplicates":
+              continue
+
+            step_no = item.get("step")
+            planned_step = step_by_number.get(step_no, {}) if step_no is not None else {}
+            parameters = planned_step.get("parameters", {}) if isinstance(planned_step, dict) else {}
+            selected_columns = parameters.get("columns")
+
+            if isinstance(selected_columns, str) and selected_columns.strip():
+              preferred_columns.append(selected_columns.strip())
+            elif isinstance(selected_columns, list):
+              for col in selected_columns:
+                if isinstance(col, str) and col.strip():
+                  preferred_columns.append(col.strip())
+
+          unique_info = self._extract_unique_values_from_read_data(
+            read_data_payload,
+            preferred_columns=preferred_columns,
+          )
+
+          if unique_info:
+            values = unique_info["values"]
+            preview_limit = 25
+            shown_values = ", ".join(values[:preview_limit])
+            remaining_count = max(0, len(values) - preview_limit)
+            tail = f", ... (+{remaining_count} more)" if remaining_count else ""
+
+            message_parts.append(
+              f"Unique values in {unique_info['column']} ({len(values)}): {shown_values}{tail}"
+            )
+          else:
+            rows = read_data_payload.get("rows")
+            columns = read_data_payload.get("columns")
+            sheet_name = read_data_payload.get("sheet_name")
+            if rows is not None and columns is not None:
+              message_parts.append(
+                f"Retrieved {rows} row(s) and {columns} column(s) from sheet '{sheet_name}'."
+              )
 
       if failed_results:
         failed_tools = [r.get("tool", "unknown tool") for r in failed_results]
@@ -392,6 +524,98 @@ Generate a concise summary (2-4 sentences only):
         return "Operations completed."
 
       return " ".join(message_parts)
+
+    def _extract_unique_values_from_read_data(
+      self,
+      read_data_payload: Dict[str, Any],
+      preferred_columns: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+      """Extract unique values from a preferred column in read_data output."""
+
+      table = read_data_payload.get("data")
+      if not isinstance(table, list) or len(table) < 2:
+        return None
+
+      header_row = table[0]
+      if not isinstance(header_row, list):
+        return None
+
+      headers = [str(cell).strip() if cell is not None else "" for cell in header_row]
+      if not headers:
+        return None
+
+      candidates: List[str] = []
+      for col in preferred_columns or []:
+        if isinstance(col, str) and col.strip():
+          candidates.append(col.strip())
+
+      if not candidates:
+        for header in headers:
+          header_lower = header.lower()
+          if "department" in header_lower or "dept" in header_lower:
+            candidates.append(header)
+            break
+
+      if not candidates:
+        return None
+
+      target_idx: Optional[int] = None
+      target_name: Optional[str] = None
+      normalized_headers = [h.lower() for h in headers]
+
+      for candidate in candidates:
+        candidate_lower = candidate.lower()
+
+        for idx, header_lower in enumerate(normalized_headers):
+          if header_lower == candidate_lower:
+            target_idx = idx
+            target_name = headers[idx]
+            break
+
+        if target_idx is not None:
+          break
+
+        for idx, header_lower in enumerate(normalized_headers):
+          if candidate_lower in header_lower or header_lower in candidate_lower:
+            target_idx = idx
+            target_name = headers[idx]
+            break
+
+        if target_idx is not None:
+          break
+
+      if target_idx is None:
+        return None
+
+      unique_values: List[str] = []
+      seen = set()
+
+      for row in table[1:]:
+        if not isinstance(row, list) or target_idx >= len(row):
+          continue
+
+        raw_value = row[target_idx]
+        if raw_value is None:
+          continue
+
+        value = str(raw_value).strip()
+        if not value:
+          continue
+
+        dedupe_key = value.lower()
+        if dedupe_key in seen:
+          continue
+
+        seen.add(dedupe_key)
+        unique_values.append(value)
+
+      if not unique_values:
+        return None
+
+      return {
+        "column": target_name or candidates[0],
+        "values": unique_values,
+      }
     
     def _build_system_prompt(self, session_summary: Optional[str] = None) -> str:
         """Build system prompt for general conversation"""
@@ -680,6 +904,9 @@ Rule 8: Charts
 - Specify data_range as "A1:D10" format (first column = categories, rest = data series)
 - For scatter plots, specify separate x_range and y_range
 - position defaults to "E1" but can be adjusted
+- If user asks for "amount spent by each department", use Department as category and only numeric amount column(s) as values.
+- Do NOT include text/date columns as value series in chart data_range.
+- If user asks for chart in a "new sheet", avoid copy_sheet unless explicitly requested by user.
 
 Rule 9: Formatting
 - "bold headers" → set_cell_style with font={{"bold": true}}
@@ -730,6 +957,11 @@ Rule 15: Structure and Cleaning
 - "fill missing salary with mean" → fill_missing_values with strategy="mean"
 - "make names uppercase" / "title case" → standardize_text_case
 - "trim whitespace in Email" → trim_whitespace
+
+Rule 16: Read-Only Retrieval Requests
+- For "list", "show", "retrieve", "what are", or "unique values" requests, prefer read-only tools.
+- DO NOT use mutating tools (especially remove_duplicates) unless user explicitly asks to modify file data.
+- For unique lists, use read_data/filter_data/calculate_aggregate as needed and let response formatting present distinct values.
 
 ═══════════════════════════════════════════════════════════════════════════════
 EXAMPLES FOR NEW TOOLS

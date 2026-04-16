@@ -3134,17 +3134,24 @@ class MCPService:
             raise ValueError(f"Sheet '{source_sheet}' not found")
 
         source = wb[source_sheet]
+        requested_target_name = str(target_name).strip()
+        if not requested_target_name:
+            raise ValueError("target_name cannot be empty")
+
         target = wb.copy_worksheet(source)
-        target.title = target_name
+        target.title = requested_target_name
+        actual_target_name = target.title
 
         wb.save(filepath)
-        logger.info(f"Copied sheet '{source_sheet}' to '{target_name}'")
+        logger.info(f"Copied sheet '{source_sheet}' to '{actual_target_name}'")
 
         return {
             "file_id": file_id,
             "source_sheet": source_sheet,
-            "new_sheet": target_name,
-            "message": f"Copied sheet '{source_sheet}' to '{target_name}'"
+            "requested_sheet": requested_target_name,
+            "new_sheet": actual_target_name,
+            "name_adjusted": actual_target_name != requested_target_name,
+            "message": f"Copied sheet '{source_sheet}' to '{actual_target_name}'"
         }
 
     async def move_sheet(

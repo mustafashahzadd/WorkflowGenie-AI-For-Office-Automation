@@ -563,6 +563,33 @@ async def _handle_excel_operation(
                     "result": result.get("data"),
                     "error": result.get("error")
                 })
+
+                if result["success"] and step.get("tool") == "copy_sheet":
+                    step_params = step.get("parameters", {})
+                    result_data = result.get("data") if isinstance(result.get("data"), dict) else {}
+
+                    requested_sheet = step_params.get("target_name") if isinstance(step_params, dict) else None
+                    actual_sheet = result_data.get("new_sheet")
+
+                    if requested_sheet and actual_sheet and requested_sheet != actual_sheet:
+                        for planned_step in plan.get("steps", []):
+                            if planned_step.get("step", 0) <= step.get("step", 0):
+                                continue
+
+                            planned_params = planned_step.get("parameters")
+                            if not isinstance(planned_params, dict):
+                                continue
+
+                            if planned_params.get("sheet_name") == requested_sheet:
+                                planned_params["sheet_name"] = actual_sheet
+
+                            if planned_params.get("source_sheet") == requested_sheet:
+                                planned_params["source_sheet"] = actual_sheet
+
+                        logger.info(
+                            f"Updated downstream steps to use copied sheet '{actual_sheet}' "
+                            f"instead of requested '{requested_sheet}'"
+                        )
                 
                 # Broadcast completion
                 await ws_manager.broadcast({

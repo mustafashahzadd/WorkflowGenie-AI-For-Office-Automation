@@ -3,14 +3,16 @@ File Management APIs for WorkflowGenie
 Handles Excel file upload, download, and metadata
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 from pathlib import Path
+from io import BytesIO
 import uuid
+import openpyxl
 from loguru import logger
 
 from app.core.config import settings
@@ -34,6 +36,20 @@ class FileUploadResponse(BaseModel):
     message: str
     rag_synced: bool = True
     rag_message: Optional[str] = None
+
+
+class FileValidationResult(BaseModel):
+    signature_verified: bool
+    structure_verified: bool
+    integrity_verified: bool
+
+
+class FileSaveResponse(BaseModel):
+    message: str
+    file_id: str
+    filename: str
+    size_bytes: int
+    validation: Optional[FileValidationResult] = None
 
 class FileMetadata(BaseModel):
     file_id: str
@@ -71,12 +87,60 @@ def get_file_path(file_id: str) -> Path:
         detail="File not found"
     )
 
+
+def refresh_rag_index_safe(action: str) -> None:
+    """Sync RAG index without interrupting API success path."""
+    if not settings.RAG_ENABLED:
+        logger.info(f"RAG is disabled; {action} sync skipped")
+        return
+
+    try:
+        rag_result = rag_service.refresh_index()
+        logger.info(
+            f"RAG index synced after {action} "
+            f"({rag_result.get('indexed_chunks', 0)} chunks across "
+            f"{rag_result.get('indexed_files', 0)} files)"
+        )
+    except Exception as exc:
+        logger.error(f"Failed to sync RAG index after {action}: {exc}")
+
+
+def validate_excel_payload(filename: str, content: bytes) -> dict:
+    """Perform lightweight Excel payload validation before saving."""
+    lower_name = filename.lower()
+
+    if lower_name.endswith((".xlsx", ".xlsm")):
+        signature_verified = content.startswith(b"PK\x03\x04")
+    elif lower_name.endswith(".xls"):
+        signature_verified = content.startswith(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1")
+    else:
+        signature_verified = False
+
+    structure_verified = False
+    if signature_verified and lower_name.endswith((".xlsx", ".xlsm")):
+        try:
+            workbook = openpyxl.load_workbook(BytesIO(content), read_only=True, data_only=True)
+            workbook.close()
+            structure_verified = True
+        except Exception:
+            structure_verified = False
+    elif signature_verified and lower_name.endswith(".xls"):
+        # Legacy .xls is not parseable by openpyxl; signature check is used.
+        structure_verified = True
+
+    return {
+        "signature_verified": signature_verified,
+        "structure_verified": structure_verified,
+        "integrity_verified": signature_verified and structure_verified,
+    }
+
 # ============================================================================
 # API ENDPOINTS
 # ============================================================================
 
 @router.post("/upload", response_model=FileUploadResponse)
 async def upload_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     session_id: str = Form(...),
     current_user: User = Depends(get_current_user),
@@ -144,16 +208,8 @@ async def upload_file(
     rag_synced = True
     rag_message: Optional[str] = None
     if settings.RAG_ENABLED:
-        try:
-            rag_result = rag_service.refresh_index()
-            rag_message = (
-                f"RAG index synced ({rag_result.get('indexed_chunks', 0)} chunks across "
-                f"{rag_result.get('indexed_files', 0)} files)"
-            )
-        except Exception as exc:
-            rag_synced = False
-            rag_message = f"File uploaded, but failed to sync RAG index: {exc}"
-            logger.error(rag_message)
+        background_tasks.add_task(refresh_rag_index_safe, "upload")
+        rag_message = "File uploaded successfully; RAG index sync scheduled"
     else:
         rag_message = "RAG is disabled; index sync skipped"
     
@@ -216,6 +272,74 @@ async def download_file(
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"'
         }
+    )
+
+
+@router.put("/save/{file_id}", response_model=FileSaveResponse)
+async def save_file(
+    file_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Save/replace existing Excel file content by file_id.
+
+    Requires Authorization header: Bearer <token>
+    """
+
+    if not file.filename.endswith((".xlsx", ".xls", ".xlsm")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only Excel files (.xlsx, .xls, .xlsm) are allowed"
+        )
+
+    excel_file = db.query(ExcelFile).filter(ExcelFile.id == file_id).first()
+    if not excel_file:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty"
+        )
+
+    validation = validate_excel_payload(file.filename, content)
+    if not validation["integrity_verified"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid Excel file content; integrity validation failed"
+        )
+
+    old_path = Path(excel_file.filepath)
+    target_dir = old_path.parent if old_path.parent else Path("data/excel_files")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    new_path = target_dir / f"{file_id}_{file.filename}"
+
+    with open(new_path, "wb") as f:
+        f.write(content)
+
+    if old_path != new_path and old_path.exists():
+        old_path.unlink()
+
+    excel_file.filename = file.filename
+    excel_file.filepath = str(new_path)
+    db.commit()
+
+    if settings.RAG_ENABLED:
+        background_tasks.add_task(refresh_rag_index_safe, "save")
+
+    return FileSaveResponse(
+        message="File saved successfully",
+        file_id=file_id,
+        filename=file.filename,
+        size_bytes=len(content),
+        validation=FileValidationResult(**validation)
     )
 
 

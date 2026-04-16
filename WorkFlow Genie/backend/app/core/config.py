@@ -3,8 +3,7 @@ Configuration settings for WorkflowGenie
 """
 
 from pydantic_settings import BaseSettings
-from typing import List
-import os
+from typing import List, Optional
 from pathlib import Path
 
 class Settings(BaseSettings):
@@ -20,9 +19,17 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./workflowgenie.db"
     
+    # LLM Provider
+    LLM_PROVIDER: str = "openai"
+
     # OpenAI
-    OPENAI_API_KEY: str
-    OPENAI_MODEL: str = "gpt-4-turbo-preview"
+    OPENAI_API_KEY: Optional[str]
+    OPENAI_MODEL: str = "gpt-4o"
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+
+    # Claude (Anthropic)
+    ANTHROPIC_API_KEY: Optional[str]
+    CLAUDE_MODEL: str = "claude-opus-4-6"
     
     # CORS
     CORS_ORIGINS: List[str] = ["*"]
@@ -30,6 +37,16 @@ class Settings(BaseSettings):
     # File Storage
     DATA_DIR: Path = Path("./data")
     EXCEL_DIR: Path = Path("./data/excel_files")
+
+    # RAG
+    RAG_ENABLED: bool = True
+    RAG_INDEX_DIR: Path = Path("./data/rag_index")
+    RAG_EMBEDDING_PROVIDER: str = "openai"  # openai | sentence_transformers
+    RAG_EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    RAG_CHUNK_SIZE: int = 600
+    RAG_CHUNK_OVERLAP: int = 80
+    RAG_TOP_K: int = 4
+    RAG_MAX_ROWS_PER_SHEET: int = 2000
     
     # Logging
     LOG_LEVEL: str = "INFO"
@@ -43,6 +60,7 @@ class Settings(BaseSettings):
         # Create directories if they don't exist
         self.DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.EXCEL_DIR.mkdir(parents=True, exist_ok=True)
+        self.RAG_INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
 # Create settings instance
 settings = Settings()

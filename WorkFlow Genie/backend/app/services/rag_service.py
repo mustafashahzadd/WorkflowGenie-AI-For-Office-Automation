@@ -485,12 +485,15 @@ class RAGService:
         system_prompt = (
             "You are WorkflowGenie RAG assistant. "
             "Answer strictly from the provided context chunks. "
+            "Each source includes a similarity score (higher means more relevant). "
+            "Prefer higher-scoring sources when evidence conflicts, and do not invent facts. "
             "If the answer is not in context, say you could not find it in indexed data."
         )
         user_prompt = (
             f"Question:\n{question}\n\n"
             f"Context Chunks:\n{context}\n\n"
-            "Return a concise answer and mention the most relevant sheet/row references."
+            "Return a concise answer and mention the most relevant sheet/row references. "
+            "Use the provided similarity scores to prioritize evidence."
         )
 
         try:
@@ -615,8 +618,9 @@ class RAGService:
 
         for idx, chunk in enumerate(retrieved, start=1):
             row_label = chunk["row_number"] if chunk["row_number"] is not None else "-"
+            score = float(chunk.get("score", 0.0))
             context_parts.append(
-                f"[Source {idx}] {chunk['filename']} | {chunk['sheet_name']} | row {row_label}\n"
+                f"[Source {idx}] {chunk['filename']} | {chunk['sheet_name']} | row {row_label} | similarity_score {score:.6f}\n"
                 f"{chunk['text']}"
             )
             sources.append(
