@@ -420,6 +420,12 @@ Generate a concise summary (2-4 sentences only):
           f"I completed {len(successful_results)} operation(s) successfully: {', '.join(successful_tools)}."
         )
 
+        step_by_number = {
+          step.get("step"): step
+          for step in steps
+          if isinstance(step, dict) and step.get("step") is not None
+        }
+
         chart_tools = {
           "create_bar_chart",
           "create_line_chart",
@@ -464,6 +470,7 @@ Generate a concise summary (2-4 sentences only):
           "calculate_aggregate",
           "conditional_aggregate",
         }
+        grouped_aggregate_payloads: List[Dict[str, Any]] = []
         for item in successful_results:
           tool_name = str(item.get("tool", "")).strip().lower()
           if tool_name not in aggregate_tools:
@@ -473,17 +480,23 @@ Generate a concise summary (2-4 sentences only):
           if not isinstance(aggregate_result, dict):
             continue
 
+          if isinstance(aggregate_result.get("results"), dict):
+            grouped_aggregate_payloads.append(aggregate_result)
+
           aggregate_summary = self._summarize_aggregate_result(aggregate_result)
           if aggregate_summary:
             message_parts.append(aggregate_summary)
 
-        # For read-only questions, include concrete values from retrieved data.
-        step_by_number = {
-          step.get("step"): step
-          for step in steps
-          if isinstance(step, dict) and step.get("step") is not None
-        }
+        threshold_count_summary = self._summarize_group_threshold_count(
+          steps=steps,
+          step_by_number=step_by_number,
+          successful_results=successful_results,
+          grouped_aggregate_payloads=grouped_aggregate_payloads,
+        )
+        if threshold_count_summary:
+          message_parts.append(threshold_count_summary)
 
+        # For read-only questions, include concrete values from retrieved data.
         read_data_payload: Optional[Dict[str, Any]] = None
         for item in successful_results:
           if item.get("tool") == "read_data" and isinstance(item.get("result"), dict):
@@ -525,9 +538,31 @@ Generate a concise summary (2-4 sentences only):
               f"Unique values in {unique_info['column']} ({len(values)}): {shown_values}{tail}"
             )
           else:
+            table = read_data_payload.get("data")
+            sheet_name = read_data_payload.get("sheet_name")
+
+            if isinstance(table, list) and table and isinstance(table[0], list):
+              header_cells = table[0]
+              headers: List[str] = []
+              for idx, raw_header in enumerate(header_cells, start=1):
+                if raw_header is None:
+                  headers.append(f"Column{idx}")
+                  continue
+
+                header_text = str(raw_header).strip()
+                headers.append(header_text if header_text else f"Column{idx}")
+
+              if headers:
+                preview_limit = 25
+                shown_headers = ", ".join(headers[:preview_limit])
+                remaining_count = max(0, len(headers) - preview_limit)
+                tail = f", ... (+{remaining_count} more)" if remaining_count else ""
+                message_parts.append(
+                  f"Columns in sheet '{sheet_name}': {shown_headers}{tail}."
+                )
+
             rows = read_data_payload.get("rows")
             columns = read_data_payload.get("columns")
-            sheet_name = read_data_payload.get("sheet_name")
             if rows is not None and columns is not None:
               message_parts.append(
                 f"Retrieved {rows} row(s) and {columns} column(s) from sheet '{sheet_name}'."
@@ -824,6 +859,135 @@ Generate a concise summary (2-4 sentences only):
         f"{group_label.capitalize()} with {qualifier} {operation_fragment} {value_column_name}: "
         f"{best_label} ({self._format_scalar(best_value)})."
       )
+
+    def _summarize_group_threshold_count(
+      self,
+      steps: List[Dict[str, Any]],
+      step_by_number: Dict[Any, Dict[str, Any]],
+      successful_results: List[Dict[str, Any]],
+      grouped_aggregate_payloads: List[Dict[str, Any]],
+    ) -> Optional[str]:
+      """Correct count queries like 'how many departments have total > X' using grouped aggregates."""
+
+      if not grouped_aggregate_payloads:
+        return None
+
+      successful_filter_items = [
+        item for item in successful_results
+        if str(item.get("tool", "")).strip().lower() == "filter_data"
+        and isinstance(item.get("result"), dict)
+      ]
+
+      if not successful_filter_items:
+        return None
+
+      for filter_item in successful_filter_items:
+        step_no = filter_item.get("step")
+        planned_step = step_by_number.get(step_no, {}) if step_no is not None else {}
+        parameters = planned_step.get("parameters", {}) if isinstance(planned_step, dict) else {}
+
+        filter_column = parameters.get("column") if isinstance(parameters, dict) else None
+        filter_operator = parameters.get("operator") if isinstance(parameters, dict) else None
+        filter_value = parameters.get("value") if isinstance(parameters, dict) else None
+
+        threshold = self._to_float(filter_value)
+
+        filter_result = filter_item.get("result") if isinstance(filter_item.get("result"), dict) else {}
+        if threshold is None or not isinstance(filter_operator, str):
+          filter_expr = filter_result.get("filter")
+          if isinstance(filter_expr, str):
+            parsed = re.search(r"(.+?)\s*(>=|>)\s*(-?\d+(?:\.\d+)?)", filter_expr)
+            if parsed:
+              filter_column = parsed.group(1).strip()
+              filter_operator = parsed.group(2)
+              threshold = self._to_float(parsed.group(3))
+
+        if threshold is None or str(filter_operator).strip() not in {">", ">="}:
+          continue
+
+        target_aggregate: Optional[Dict[str, Any]] = None
+        normalized_filter_column = self._normalize_column_key(filter_column)
+
+        for aggregate_payload in grouped_aggregate_payloads:
+          value_column = aggregate_payload.get("column") or aggregate_payload.get("value_column")
+          if normalized_filter_column and self._normalize_column_key(value_column) != normalized_filter_column:
+            continue
+          target_aggregate = aggregate_payload
+          break
+
+        if target_aggregate is None:
+          continue
+
+        grouped_results = target_aggregate.get("results")
+        if not isinstance(grouped_results, dict) or not grouped_results:
+          continue
+
+        matching_groups: List[Tuple[str, float]] = []
+        for group_name, raw_value in grouped_results.items():
+          numeric_value = self._to_float(raw_value)
+          if numeric_value is None:
+            continue
+
+          if str(filter_operator).strip() == ">" and numeric_value > threshold:
+            matching_groups.append((str(group_name), numeric_value))
+          elif str(filter_operator).strip() == ">=" and numeric_value >= threshold:
+            matching_groups.append((str(group_name), numeric_value))
+
+        reported_count = filter_result.get("count")
+        reported_count_int: Optional[int] = None
+        try:
+          if reported_count is not None:
+            reported_count_int = int(reported_count)
+        except (TypeError, ValueError):
+          reported_count_int = None
+
+        if reported_count_int is not None and reported_count_int == len(matching_groups):
+          continue
+
+        matching_groups.sort(key=lambda item: item[1], reverse=True)
+        group_label = target_aggregate.get("group_by") or target_aggregate.get("group_column") or "group"
+        group_label_text = str(group_label).strip() or "group"
+        group_noun = f"{group_label_text}s" if not group_label_text.lower().endswith("s") else group_label_text
+
+        preview_limit = 10
+        shown = ", ".join([name for name, _ in matching_groups[:preview_limit]])
+        remaining_count = max(0, len(matching_groups) - preview_limit)
+        tail = f", ... (+{remaining_count} more)" if remaining_count else ""
+
+        return (
+          f"Correct grouped count: {group_noun.capitalize()} with total "
+          f"{target_aggregate.get('column') or target_aggregate.get('value_column') or 'value'} "
+          f"{filter_operator} {self._format_scalar(threshold)} = {len(matching_groups)}"
+          + (f" ({shown}{tail})." if shown else ".")
+        )
+
+      return None
+
+    def _to_float(self, value: Any) -> Optional[float]:
+      """Convert numeric-like values to float when possible."""
+
+      if isinstance(value, (int, float)):
+        return float(value)
+
+      if isinstance(value, str):
+        token = value.strip().replace(",", "")
+        if not token:
+          return None
+        try:
+          return float(token)
+        except ValueError:
+          return None
+
+      return None
+
+    def _normalize_column_key(self, value: Any) -> str:
+      """Normalize column names for tolerant matching."""
+
+      if value is None:
+        return ""
+
+      text = str(value).strip().lower()
+      return re.sub(r"[^a-z0-9]", "", text)
     
     def _build_system_prompt(self, session_summary: Optional[str] = None) -> str:
         """Build system prompt for general conversation"""
@@ -870,6 +1034,19 @@ Be friendly, concise, and helpful. Understand user intent naturally and suggest 
 
         subject_columns_str = json.dumps(subject_columns) if subject_columns else '["Subject1", "Subject2", "Subject3"]'
 
+        write_rag_evidence = context.get("write_rag_evidence")
+        if not isinstance(write_rag_evidence, dict):
+            write_rag_evidence = {}
+
+        write_rag_enabled = bool(write_rag_evidence.get("enabled"))
+        write_rag_summary = str(write_rag_evidence.get("summary") or "Not available")
+        write_rag_warnings = write_rag_evidence.get("warnings") if isinstance(write_rag_evidence.get("warnings"), list) else []
+        write_rag_warnings_str = json.dumps(write_rag_warnings, indent=2)
+        write_rag_top_score = write_rag_evidence.get("top_score")
+        write_rag_confident_hits = write_rag_evidence.get("confident_hits")
+        write_rag_estimated_rows = write_rag_evidence.get("estimated_rows")
+        write_rag_threshold = write_rag_evidence.get("threshold")
+
         prompt = f"""You are Excelerate, an advanced Excel automation planner with 74 MCP tools and 106+ formula support. You handle student management, business operations, data analysis, charting, formatting, and all Excel tasks.
 
 Analyze the user's intent and generate a precise step-by-step execution plan using the available tools.
@@ -892,6 +1069,16 @@ Recent Operations:
 
 Available Files:
 {json.dumps(context.get('available_files', []), indent=2)}
+
+WRITE SAFETY EVIDENCE (RAG for write/update grounding):
+- Enabled: {write_rag_enabled}
+- Top score: {write_rag_top_score}
+- Confident hits: {write_rag_confident_hits}
+- Estimated rows from evidence: {write_rag_estimated_rows}
+- Confidence threshold: {write_rag_threshold}
+- Warnings: {write_rag_warnings_str}
+- Evidence snippets:
+{write_rag_summary}
 
 ═══════════════════════════════════════════════════════════════════════════════
 USER REQUEST
@@ -1172,6 +1359,18 @@ Rule 16: Read-Only Retrieval Requests
 - For "list", "show", "retrieve", "what are", or "unique values" requests, prefer read-only tools.
 - DO NOT use mutating tools (especially remove_duplicates) unless user explicitly asks to modify file data.
 - For unique lists, use read_data/filter_data/calculate_aggregate as needed and let response formatting present distinct values.
+
+Rule 17: Write/Update Grounding Safety
+- For mutating requests, use column names exactly as listed in ACTUAL COLUMN HEADERS.
+- If WRITE SAFETY EVIDENCE is available, prioritize filters/values that appear in evidence snippets.
+- Do NOT invent columns, IDs, or filter values that are absent from headers/evidence.
+- If evidence is weak (warnings present, low score, or very few confident hits), choose conservative steps and narrow the update scope.
+- Prefer targeted updates (update_by_search / bulk_update with explicit filter) over broad operations unless user clearly asks for all rows.
+
+Rule 18: Group Threshold Count Queries
+- For questions like "How many departments have total amount > 20000", first compute grouped totals with calculate_aggregate (sum + group_by).
+- Do NOT use filter_data on raw rows for this question type.
+- If a follow-up count is needed, count qualifying groups from grouped aggregate results (not row-level records).
 
 ═══════════════════════════════════════════════════════════════════════════════
 EXAMPLES FOR NEW TOOLS

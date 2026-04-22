@@ -596,6 +596,128 @@ class RAGService:
 
         return results
 
+    def _summarize_write_evidence(
+        self,
+        retrieved: List[Dict[str, Any]],
+        min_score: float,
+    ) -> Dict[str, Any]:
+        """Build compact summary and risk signals for write-operation grounding."""
+
+        if not retrieved:
+            return {
+                "summary": "No retrieval evidence found.",
+                "confident_hits": 0,
+                "top_score": None,
+                "estimated_rows": 0,
+                "warnings": ["No retrieval evidence available for write validation."],
+            }
+
+        top_score = float(max(float(item.get("score", 0.0)) for item in retrieved))
+        confident_hits = sum(
+            1
+            for item in retrieved
+            if float(item.get("score", 0.0)) >= min_score
+        )
+
+        distinct_rows = {
+            (item.get("sheet_name"), item.get("row_number"))
+            for item in retrieved
+            if item.get("row_number") is not None
+        }
+        estimated_rows = len(distinct_rows)
+
+        preview_lines: List[str] = []
+        for item in retrieved[:5]:
+            row_label = item.get("row_number")
+            preview = str(item.get("text", "")).replace("\n", " ")[:180].strip()
+            preview_lines.append(
+                f"- {item.get('sheet_name')} row {row_label if row_label is not None else '-'} "
+                f"(score {float(item.get('score', 0.0)):.3f}): {preview}"
+            )
+
+        warnings: List[str] = []
+        if confident_hits < settings.RAG_WRITE_MIN_CONFIDENT_HITS:
+            warnings.append(
+                "Low-confidence write evidence: not enough high-score retrieval hits."
+            )
+
+        if top_score < min_score:
+            warnings.append(
+                "Top retrieval score is below configured confidence threshold."
+            )
+
+        if estimated_rows > settings.RAG_WRITE_MAX_AFFECTED_ROWS_WARNING:
+            warnings.append(
+                f"Estimated affected rows ({estimated_rows}) exceed warning threshold "
+                f"({settings.RAG_WRITE_MAX_AFFECTED_ROWS_WARNING})."
+            )
+
+        return {
+            "summary": "\n".join(preview_lines),
+            "confident_hits": confident_hits,
+            "top_score": top_score,
+            "estimated_rows": estimated_rows,
+            "warnings": warnings,
+        }
+
+    def retrieve_for_write(
+        self,
+        question: str,
+        file_id: Optional[str] = None,
+        sheet_name: Optional[str] = None,
+        top_k: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Retrieve chunks and produce write-safety signals for planning/validation."""
+
+        if not settings.RAG_ENABLED or not settings.RAG_WRITE_ENABLED:
+            return {
+                "enabled": False,
+                "reason": "RAG write grounding is disabled.",
+                "sources": [],
+                "summary": "",
+                "warnings": [],
+                "top_score": None,
+                "confident_hits": 0,
+                "estimated_rows": 0,
+                "built_at": self.last_built_at,
+                "threshold": settings.RAG_WRITE_SCORE_THRESHOLD,
+            }
+
+        active_top_k = top_k or settings.RAG_WRITE_TOP_K
+        retrieved = self.retrieve(
+            question=question,
+            top_k=active_top_k,
+            file_id=file_id,
+            sheet_name=sheet_name,
+        )
+
+        min_score = float(settings.RAG_WRITE_SCORE_THRESHOLD)
+        evidence = self._summarize_write_evidence(retrieved=retrieved, min_score=min_score)
+
+        sources: List[Dict[str, Any]] = []
+        for item in retrieved:
+            sources.append(
+                {
+                    "file_id": item.get("file_id"),
+                    "filename": item.get("filename"),
+                    "sheet_name": item.get("sheet_name"),
+                    "row_number": item.get("row_number"),
+                    "score": float(item.get("score", 0.0)),
+                }
+            )
+
+        return {
+            "enabled": True,
+            "sources": sources,
+            "summary": evidence["summary"],
+            "warnings": evidence["warnings"],
+            "top_score": evidence["top_score"],
+            "confident_hits": evidence["confident_hits"],
+            "estimated_rows": evidence["estimated_rows"],
+            "built_at": self.last_built_at,
+            "threshold": min_score,
+        }
+
     def answer_query(
         self,
         question: str,

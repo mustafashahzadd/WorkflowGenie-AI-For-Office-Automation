@@ -6,11 +6,13 @@ Handles all Excel file manipulation - Basic + Advanced Tools
 import openpyxl
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter, column_index_from_string
+from openpyxl.styles.numbers import is_date_format
+from openpyxl.utils.datetime import from_excel
 import pandas as pd
 from pathlib import Path
 import uuid
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from loguru import logger
 
@@ -68,7 +70,9 @@ class MCPService:
             parameters['row_index'] = parameters.pop('row')
         if 'count' in parameters and 'amount' not in parameters:
             parameters['amount'] = parameters.pop('count')
-        if 'column_name' in parameters and 'column' not in parameters:
+        if tool_name == "fill_column" and 'column' in parameters and 'column_name' not in parameters:
+            parameters['column_name'] = parameters.pop('column')
+        if tool_name != "fill_column" and 'column_name' in parameters and 'column' not in parameters:
             parameters['column'] = parameters.pop('column_name')
         if 'mappings' in parameters and 'rename_map' not in parameters:
             parameters['rename_map'] = parameters.pop('mappings')
@@ -283,8 +287,11 @@ class MCPService:
         
         for sheet_name in sheets:
             wb.create_sheet(title=sheet_name)
-        
-        wb.save(filepath)
+
+        try:
+            self._save_workbook(wb, filepath)
+        finally:
+            wb.close()
         
         # Save to database if db and session_id provided
         if db and session_id:
@@ -300,6 +307,7 @@ class MCPService:
                 db.commit()
                 logger.info(f"Saved workbook to database: {file_id}")
             except Exception as e:
+                db.rollback()
                 logger.warning(f"Could not save to database: {e}")
         
         logger.info(f"Created workbook: {filename} with {len(sheets)} sheet(s)")
@@ -381,25 +389,28 @@ class MCPService:
         
         filepath = self._get_filepath(file_id)
         wb = openpyxl.load_workbook(filepath)
-        
-        if sheet_name not in wb.sheetnames:
-            wb.create_sheet(title=sheet_name)
-        
-        ws = wb[sheet_name]
-        
-        start_row, start_col = self._parse_cell_address(start_cell)
-        cells_written = 0
-        
-        for row_idx, row_data in enumerate(data):
-            for col_idx, value in enumerate(row_data):
-                ws.cell(
-                    row=start_row + row_idx,
-                    column=start_col + col_idx,
-                    value=value
-                )
-                cells_written += 1
-        
-        wb.save(filepath)
+
+        try:
+            if sheet_name not in wb.sheetnames:
+                wb.create_sheet(title=sheet_name)
+
+            ws = wb[sheet_name]
+
+            start_row, start_col = self._parse_cell_address(start_cell)
+            cells_written = 0
+
+            for row_idx, row_data in enumerate(data):
+                for col_idx, value in enumerate(row_data):
+                    ws.cell(
+                        row=start_row + row_idx,
+                        column=start_col + col_idx,
+                        value=value
+                    )
+                    cells_written += 1
+
+            self._save_workbook(wb, filepath)
+        finally:
+            wb.close()
         
         logger.info(f"Wrote {cells_written} cells to {sheet_name}")
         
@@ -526,59 +537,62 @@ class MCPService:
         
         filepath = self._get_filepath(file_id)
         wb = openpyxl.load_workbook(filepath)
-        
-        sheet_names: List[str] = []
-        sheet_details: List[Dict[str, Any]] = []
-        total_rows = 0
-        total_columns = 0
-        total_embedded_charts = 0
 
-        for ws in wb.worksheets:
-            chart_count = len(getattr(ws, "_charts", []))
-            total_embedded_charts += chart_count
+        try:
+            sheet_names: List[str] = []
+            sheet_details: List[Dict[str, Any]] = []
+            total_rows = 0
+            total_columns = 0
+            total_embedded_charts = 0
 
-            raw_used_range = ws.calculate_dimension() if ws.max_row and ws.max_column else None
-            is_empty_sheet = raw_used_range == "A1:A1" and ws["A1"].value in (None, "")
+            for ws in wb.worksheets:
+                chart_count = len(getattr(ws, "_charts", []))
+                total_embedded_charts += chart_count
 
-            row_count = 0 if is_empty_sheet else ws.max_row
-            column_count = 0 if is_empty_sheet else ws.max_column
-            used_range = None if is_empty_sheet else raw_used_range
+                raw_used_range = ws.calculate_dimension() if ws.max_row and ws.max_column else None
+                is_empty_sheet = raw_used_range == "A1:A1" and ws["A1"].value in (None, "")
 
-            total_rows += row_count
-            total_columns = max(total_columns, column_count)
-            sheet_names.append(ws.title)
+                row_count = 0 if is_empty_sheet else ws.max_row
+                column_count = 0 if is_empty_sheet else ws.max_column
+                used_range = None if is_empty_sheet else raw_used_range
 
-            sheet_details.append({
-                "name": ws.title,
-                "row_count": row_count,
-                "column_count": column_count,
-                "used_range": used_range,
-                "is_empty": is_empty_sheet,
-                "chart_count": chart_count,
-                "has_charts": chart_count > 0,
-            })
+                total_rows += row_count
+                total_columns = max(total_columns, column_count)
+                sheet_names.append(ws.title)
 
-        chartsheet_count = len(getattr(wb, "chartsheets", []))
-        
-        file_stats = filepath.stat()
-        
-        return {
-            "file_id": file_id,
-            "filename": filepath.name,
-            "filepath": str(filepath),
-            "size": file_stats.st_size,
-            "created": file_stats.st_birthtime,
-            "modified": file_stats.st_mtime,
-            "sheets": sheet_names,
-            "sheet_names": sheet_names,
-            "sheet_details": sheet_details,
-            "total_sheets": len(sheet_names),
-            "total_rows": total_rows,
-            "total_columns": total_columns,
-            "embedded_chart_count": total_embedded_charts,
-            "chartsheet_count": chartsheet_count,
-            "has_charts": (total_embedded_charts + chartsheet_count) > 0,
-        }
+                sheet_details.append({
+                    "name": ws.title,
+                    "row_count": row_count,
+                    "column_count": column_count,
+                    "used_range": used_range,
+                    "is_empty": is_empty_sheet,
+                    "chart_count": chart_count,
+                    "has_charts": chart_count > 0,
+                })
+
+            chartsheet_count = len(getattr(wb, "chartsheets", []))
+
+            file_stats = filepath.stat()
+
+            return {
+                "file_id": file_id,
+                "filename": filepath.name,
+                "filepath": str(filepath),
+                "size": file_stats.st_size,
+                "created": file_stats.st_birthtime,
+                "modified": file_stats.st_mtime,
+                "sheets": sheet_names,
+                "sheet_names": sheet_names,
+                "sheet_details": sheet_details,
+                "total_sheets": len(sheet_names),
+                "total_rows": total_rows,
+                "total_columns": total_columns,
+                "embedded_chart_count": total_embedded_charts,
+                "chartsheet_count": chartsheet_count,
+                "has_charts": (total_embedded_charts + chartsheet_count) > 0,
+            }
+        finally:
+            wb.close()
     
     async def update_by_search(
         self,
@@ -593,43 +607,104 @@ class MCPService:
         
         filepath = self._get_filepath(file_id)
         wb = openpyxl.load_workbook(filepath)
-        
-        if sheet_name not in wb.sheetnames:
-            raise ValueError(f"Sheet '{sheet_name}' not found")
-        
-        ws = wb[sheet_name]
-        
-        search_col_num = column_index_from_string(search_column)
-        update_col_num = column_index_from_string(update_column)
-        
-        found_row = None
-        for row in range(1, ws.max_row + 1):
-            cell_value = ws.cell(row=row, column=search_col_num).value
-            if cell_value and str(cell_value).strip() == str(search_value).strip():
-                found_row = row
-                break
-        
-        if not found_row:
-            raise ValueError(f"Could not find '{search_value}' in column {search_column}")
-        
-        old_value = ws.cell(row=found_row, column=update_col_num).value
-        ws.cell(row=found_row, column=update_col_num).value = new_value
-        
-        wb.save(filepath)
-        
-        cell_address = f"{update_column}{found_row}"
-        logger.info(f"Updated {search_value} at {cell_address}")
-        
-        return {
-            "file_id": file_id,
-            "sheet_name": sheet_name,
-            "search_value": search_value,
-            "found_row": found_row,
-            "cell_address": cell_address,
-            "old_value": old_value,
-            "new_value": new_value,
-            "message": f"Updated {search_value} from {old_value} to {new_value}"
-        }
+
+        def _try_parse_date(value: Any) -> Optional[date]:
+            if isinstance(value, datetime):
+                return value.date()
+            if isinstance(value, date):
+                return value
+            if not isinstance(value, str):
+                return None
+
+            token = value.strip()
+            if not token:
+                return None
+
+            date_formats = (
+                "%m/%d/%Y",
+                "%m-%d-%Y",
+                "%Y-%m-%d",
+                "%d/%m/%Y",
+                "%d-%m-%Y",
+            )
+            for fmt in date_formats:
+                try:
+                    return datetime.strptime(token, fmt).date()
+                except ValueError:
+                    continue
+
+            return None
+
+        try:
+            if sheet_name not in wb.sheetnames:
+                raise ValueError(f"Sheet '{sheet_name}' not found")
+
+            ws = wb[sheet_name]
+            header_row = self._find_header_row(ws)
+
+            search_col_num = self._resolve_column_index(ws, search_column, header_row=header_row)
+            update_col_num = self._resolve_column_index(ws, update_column, header_row=header_row)
+
+            found_row = None
+            search_token = str(search_value).strip().lower()
+            for row_idx in range(header_row + 1, ws.max_row + 1):
+                cell_value = ws.cell(row=row_idx, column=search_col_num).value
+                if cell_value is None:
+                    continue
+
+                if str(cell_value).strip().lower() == search_token:
+                    found_row = row_idx
+                    break
+
+            if not found_row:
+                header_names: List[str] = []
+                for col_idx in range(1, ws.max_column + 1):
+                    header_value = ws.cell(row=header_row, column=col_idx).value
+                    if header_value is not None:
+                        header_names.append(str(header_value).strip())
+
+                raise ValueError(
+                    f"Could not find '{search_value}' in column '{search_column}'. "
+                    f"Available columns: {header_names}"
+                )
+
+            old_value = ws.cell(row=found_row, column=update_col_num).value
+
+            value_to_write: Any = new_value
+            parsed_date = _try_parse_date(new_value)
+            target_header = ws.cell(row=header_row, column=update_col_num).value
+            is_date_target = False
+            if isinstance(target_header, str) and "date" in target_header.strip().lower():
+                is_date_target = True
+            if isinstance(old_value, (date, datetime)):
+                is_date_target = True
+
+            if parsed_date is not None and is_date_target:
+                value_to_write = parsed_date
+
+            target_cell = ws.cell(row=found_row, column=update_col_num, value=value_to_write)
+            if isinstance(value_to_write, (date, datetime)):
+                target_cell.number_format = "yyyy-mm-dd"
+
+            self._save_workbook(wb, filepath)
+
+            cell_address = f"{get_column_letter(update_col_num)}{found_row}"
+            logger.info(f"Updated {search_value} at {cell_address}")
+
+            return {
+                "file_id": file_id,
+                "sheet_name": sheet_name,
+                "search_column": search_column,
+                "update_column": update_column,
+                "search_value": search_value,
+                "found_row": found_row,
+                "cell_address": cell_address,
+                "old_value": old_value,
+                "new_value": value_to_write,
+                "message": f"Updated {search_value} from {old_value} to {value_to_write}"
+            }
+        finally:
+            wb.close()
     
     async def smart_update(
         self,
@@ -723,30 +798,57 @@ class MCPService:
         
         filepath = self._get_filepath(file_id)
         wb = openpyxl.load_workbook(filepath)
-        
-        if sheet_name not in wb.sheetnames:
-            raise ValueError(f"Sheet '{sheet_name}' not found")
-        
-        ws = wb[sheet_name]
-        
-        data = []
-        for row_idx in range(1, min(ws.max_row + 1, max_rows + 1)):
-            row_data = []
-            for col_idx in range(1, ws.max_column + 1):
-                cell_value = ws.cell(row=row_idx, column=col_idx).value
-                row_data.append(cell_value)
-            data.append(row_data)
-        
-        logger.info(f"Read {len(data)} rows from {sheet_name}")
-        
-        return {
-            "file_id": file_id,
-            "sheet_name": sheet_name,
-            "rows": len(data),
-            "columns": len(data[0]) if data else 0,
-            "data": data,
-            "message": f"Read {len(data)} rows"
-        }
+
+        def _serialize_cell(cell) -> Any:
+            value = cell.value
+
+            if isinstance(value, datetime):
+                return value.date().isoformat() if value.time() == datetime.min.time() else value.isoformat()
+            if isinstance(value, date):
+                return value.isoformat()
+
+            if isinstance(value, (int, float)) and is_date_format(cell.number_format):
+                try:
+                    converted = from_excel(value)
+                    if isinstance(converted, datetime):
+                        return converted.date().isoformat() if converted.time() == datetime.min.time() else converted.isoformat()
+                    if isinstance(converted, date):
+                        return converted.isoformat()
+                except Exception:
+                    pass
+
+            return value
+
+        try:
+            if sheet_name not in wb.sheetnames:
+                raise ValueError(f"Sheet '{sheet_name}' not found")
+
+            ws = wb[sheet_name]
+
+            data = []
+            for row_idx in range(1, min(ws.max_row + 1, max_rows + 1)):
+                row_data = []
+                for col_idx in range(1, ws.max_column + 1):
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    row_data.append(_serialize_cell(cell))
+                data.append(row_data)
+
+            chart_count = len(getattr(ws, "_charts", []))
+
+            logger.info(f"Read {len(data)} rows from {sheet_name}")
+
+            return {
+                "file_id": file_id,
+                "sheet_name": sheet_name,
+                "rows": len(data),
+                "columns": len(data[0]) if data else 0,
+                "data": data,
+                "chart_count": chart_count,
+                "has_charts": chart_count > 0,
+                "message": f"Read {len(data)} rows"
+            }
+        finally:
+            wb.close()
     
     async def add_row(
         self,
@@ -1634,11 +1736,12 @@ class MCPService:
         self,
         file_id: str,
         sheet_name: str,
-        column_name: str,
+        column_name: Optional[str] = None,
         fill_type: str = "random",
         min_value: int = 0,
         max_value: int = 100,
-        fixed_value: Any = None
+        fixed_value: Any = None,
+        column: Optional[str] = None,
     ) -> Dict:
         """
         Tool 20: Fill a column with values
@@ -1649,57 +1752,143 @@ class MCPService:
         - "sequence": Fill with sequence from min_value incrementing by 1
         """
         import random
+
+        def _try_parse_date(value: Any) -> Optional[date]:
+            if isinstance(value, datetime):
+                return value.date()
+            if isinstance(value, date):
+                return value
+            if not isinstance(value, str):
+                return None
+
+            token = value.strip()
+            if not token:
+                return None
+
+            date_formats = (
+                "%m/%d/%Y",
+                "%m-%d-%Y",
+                "%Y-%m-%d",
+                "%d/%m/%Y",
+                "%d-%m-%Y",
+            )
+            for fmt in date_formats:
+                try:
+                    return datetime.strptime(token, fmt).date()
+                except ValueError:
+                    continue
+
+            return None
         
+        resolved_column_name = (column_name or column or "").strip()
+        if not resolved_column_name:
+            raise ValueError("column_name is required for fill_column")
+
+        fill_mode = (fill_type or "random").strip().lower()
+
+        min_date = _try_parse_date(min_value)
+        max_date = _try_parse_date(max_value)
+        date_mode = (
+            fill_mode in {"random", "sequence"}
+            and min_date is not None
+            and max_date is not None
+        )
+
+        if date_mode:
+            if min_date > max_date:
+                min_date, max_date = max_date, min_date
+            date_span_days = (max_date - min_date).days
+            min_numeric = 0
+            max_numeric = 0
+        else:
+            if fill_mode in {"random", "sequence"}:
+                try:
+                    min_numeric = int(float(min_value))
+                    max_numeric = int(float(max_value))
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        "For random/sequence fill, min_value and max_value must be numeric "
+                        "or valid date strings (e.g. 1/1/2025)."
+                    )
+
+                if min_numeric > max_numeric:
+                    min_numeric, max_numeric = max_numeric, min_numeric
+            else:
+                min_numeric = 0
+                max_numeric = 0
+
         filepath = self._get_filepath(file_id)
         wb = openpyxl.load_workbook(filepath)
-        
-        if sheet_name not in wb.sheetnames:
-            raise ValueError(f"Sheet '{sheet_name}' not found")
-        
-        ws = wb[sheet_name]
-        header_row = self._find_header_row(ws)
-        
-        # Find or create column
-        headers = {}
-        for col_idx in range(1, ws.max_column + 1):
-            header = ws.cell(row=header_row, column=col_idx).value
-            if header:
-                headers[str(header).strip().lower()] = col_idx
-        
-        target_col = headers.get(column_name.lower())
-        if not target_col:
-            # Create new column
-            target_col = ws.max_column + 1
-            ws.cell(row=header_row, column=target_col, value=column_name)
-        
-        filled = 0
-        for row_idx in range(header_row + 1, ws.max_row + 1):
-            # Check if row has data (not empty)
-            has_data = any(ws.cell(row=row_idx, column=c).value for c in range(1, ws.max_column + 1) if c != target_col)
-            
-            if has_data:
-                if fill_type == "random":
-                    value = random.randint(min_value, max_value)
-                elif fill_type == "fixed":
-                    value = fixed_value
-                elif fill_type == "sequence":
-                    value = min_value + filled
-                else:
-                    value = random.randint(min_value, max_value)
-                
-                ws.cell(row=row_idx, column=target_col, value=value)
-                filled += 1
-        
-        wb.save(filepath)
-        logger.info(f"Filled {filled} cells in column '{column_name}'")
+
+        try:
+            if sheet_name not in wb.sheetnames:
+                raise ValueError(f"Sheet '{sheet_name}' not found")
+
+            ws = wb[sheet_name]
+            header_row = self._find_header_row(ws)
+
+            # Find or create column
+            headers = {}
+            for col_idx in range(1, ws.max_column + 1):
+                header = ws.cell(row=header_row, column=col_idx).value
+                if header:
+                    headers[str(header).strip().lower()] = col_idx
+
+            target_col = headers.get(resolved_column_name.lower())
+            if not target_col:
+                # Create new column
+                target_col = ws.max_column + 1
+                ws.cell(row=header_row, column=target_col, value=resolved_column_name)
+
+            filled = 0
+            for row_idx in range(header_row + 1, ws.max_row + 1):
+                # Check if row has data (not empty)
+                has_data = any(ws.cell(row=row_idx, column=c).value for c in range(1, ws.max_column + 1) if c != target_col)
+
+                if has_data:
+                    if fill_mode == "random":
+                        if date_mode:
+                            value = min_date + timedelta(days=random.randint(0, date_span_days))
+                        else:
+                            value = random.randint(min_numeric, max_numeric)
+                    elif fill_mode == "fixed":
+                        value = fixed_value
+                    elif fill_mode == "sequence":
+                        if date_mode:
+                            offset = min(filled, date_span_days)
+                            value = min_date + timedelta(days=offset)
+                        else:
+                            value = min_numeric + filled
+                    else:
+                        if date_mode:
+                            value = min_date + timedelta(days=random.randint(0, date_span_days))
+                        else:
+                            value = random.randint(min_numeric, max_numeric)
+
+                    cell = ws.cell(row=row_idx, column=target_col, value=value)
+                    if date_mode:
+                        cell.number_format = "yyyy-mm-dd"
+                    filled += 1
+
+            if date_mode:
+                col_letter = get_column_letter(target_col)
+                current_width = ws.column_dimensions[col_letter].width
+                if current_width is None or current_width < 12:
+                    ws.column_dimensions[col_letter].width = 12
+
+            self._save_workbook(wb, filepath)
+        finally:
+            wb.close()
+
+        logger.info(f"Filled {filled} cells in column '{resolved_column_name}'")
         
         return {
             "file_id": file_id,
             "sheet_name": sheet_name,
-            "column_name": column_name,
+            "column_name": resolved_column_name,
             "fill_type": fill_type,
             "rows_filled": filled,
-            "message": f"Filled {filled} cells in '{column_name}' with {fill_type} values"
+            "message": f"Filled {filled} cells in '{resolved_column_name}' with {fill_type} values"
         }
     
     async def find_replace(
@@ -4879,6 +5068,33 @@ class MCPService:
             raise ValueError(f"File with ID '{file_id}' not found")
         
         return matches[0]
+
+    def _save_workbook(
+        self,
+        wb: Workbook,
+        filepath: Path,
+        retries: int = 3,
+        base_delay_seconds: float = 0.25,
+    ) -> None:
+        """Save workbook with retry to handle transient Windows file locks."""
+
+        for attempt in range(1, retries + 1):
+            try:
+                wb.save(filepath)
+                return
+            except PermissionError as exc:
+                if attempt >= retries:
+                    raise PermissionError(
+                        f"Permission denied while saving '{filepath}'. "
+                        "Close the workbook if it is open in Excel and try again."
+                    ) from exc
+
+                wait_seconds = base_delay_seconds * attempt
+                logger.warning(
+                    f"Workbook save attempt {attempt}/{retries} failed due to file lock: {exc}. "
+                    f"Retrying in {wait_seconds:.2f}s."
+                )
+                time.sleep(wait_seconds)
 
     def _parse_range_address(self, range_notation: str) -> Tuple[int, int, int, int]:
         """Parse A1 range notation (e.g. A1:D10) into (start_row, start_col, end_row, end_col)."""

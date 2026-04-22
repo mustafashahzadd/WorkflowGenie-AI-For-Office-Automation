@@ -4,10 +4,12 @@ Perfect session management with context continuity
 Handles conversation flow and Excel automation orchestration
 """
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any, Set
 import json
 import re
 from loguru import logger
@@ -22,6 +24,39 @@ from app.services.mcp_service import mcp_service
 from app.services.rag_service import rag_service
 
 router = APIRouter()
+
+
+WRITE_GUARDRAIL_TOOLS: Set[str] = {
+    "write_range",
+    "update_cell",
+    "apply_formula",
+    "update_by_search",
+    "smart_update",
+    "add_row",
+    "delete_row",
+    "bulk_update",
+    "bulk_update_all",
+    "calculate_column",
+    "assign_grades",
+    "fill_column",
+    "find_replace",
+    "bulk_find_replace",
+    "remove_duplicates",
+    "fill_down",
+    "json_to_excel",
+    "unpivot_columns",
+    "create_excel_table",
+    "fill_formula_down",
+    "insert_rows",
+    "delete_rows_by_index",
+    "insert_columns",
+    "delete_columns",
+    "rename_columns",
+    "fill_missing_values",
+    "standardize_text_case",
+    "trim_whitespace",
+    "batch_update",
+}
 
 # ==================== REQUEST/RESPONSE MODELS ====================
 
@@ -488,27 +523,200 @@ async def _handle_excel_operation(
             "session_id": session_id,
             "message": "Analyzing your request and planning operations..."
         })
+
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 2.5: OPTIONAL RAG EVIDENCE FOR WRITE/UPDATE REQUESTS
+        # ═══════════════════════════════════════════════════════════════
+
+        write_request_detected = _is_write_or_update_request(user_message)
+        write_confirmation_requested = _contains_write_confirmation(user_message)
+        pending_write_plan: Optional[Dict[str, Any]] = None
+
+        if write_confirmation_requested:
+            pending_write_plan = _get_pending_write_confirmation(db=db, session_id=session_id)
+
+            if pending_write_plan:
+                file_id = pending_write_plan.get("file_id") or file_id
+                sheet_name = pending_write_plan.get("sheet_name") or sheet_name
+
+                confirmed_provider = pending_write_plan.get("provider")
+                if isinstance(confirmed_provider, str) and confirmed_provider in {"openai", "claude"}:
+                    provider = confirmed_provider
+
+                logger.info(
+                    "✅ Reusing previously confirmed write plan "
+                    f"with {len(pending_write_plan.get('planned_steps', []))} step(s)"
+                )
+            else:
+                response_text = (
+                    "I couldn't find a pending write plan to confirm. "
+                    "Please resend your full update request so I can generate a fresh plan."
+                )
+
+                assistant_message = Message(
+                    session_id=session_id,
+                    role="assistant",
+                    content=response_text,
+                    meta_data=json.dumps(
+                        {
+                            "confirmation_missing": True,
+                            "file_id": file_id,
+                            "sheet_name": sheet_name,
+                            "provider": provider,
+                        }
+                    ),
+                )
+                db.add(assistant_message)
+                db.commit()
+
+                await ws_manager.broadcast(
+                    {
+                        "type": "operations_complete",
+                        "session_id": session_id,
+                        "total_steps": 0,
+                        "successful_steps": 0,
+                    }
+                )
+
+                return MessageResponse(
+                    session_id=session_id,
+                    response=response_text,
+                    operations=[],
+                    context={
+                        "file_id": file_id,
+                        "sheet_name": sheet_name,
+                        "provider": provider,
+                        "confirmation_missing": True,
+                    },
+                )
+
+        write_rag_evidence: Optional[Dict[str, Any]] = None
+        if pending_write_plan and isinstance(pending_write_plan.get("write_rag_evidence"), dict):
+            write_rag_evidence = pending_write_plan.get("write_rag_evidence")
+        elif file_id and write_request_detected:
+            if settings.RAG_ENABLED and settings.RAG_WRITE_ENABLED:
+                try:
+                    write_rag_evidence = rag_service.retrieve_for_write(
+                        question=user_message,
+                        file_id=file_id,
+                        sheet_name=sheet_name,
+                        top_k=settings.RAG_WRITE_TOP_K,
+                    )
+
+                    logger.info(
+                        "🧭 Write RAG evidence: "
+                        f"top_score={write_rag_evidence.get('top_score')} "
+                        f"confident_hits={write_rag_evidence.get('confident_hits')} "
+                        f"estimated_rows={write_rag_evidence.get('estimated_rows')}"
+                    )
+                except Exception as exc:
+                    logger.warning(f"Write RAG retrieval failed, enabling conservative gate: {exc}")
+                    write_rag_evidence = {
+                        "enabled": False,
+                        "reason": str(exc),
+                        "sources": [],
+                        "summary": "",
+                        "warnings": ["Write evidence could not be retrieved."],
+                        "top_score": None,
+                        "confident_hits": 0,
+                        "estimated_rows": 0,
+                        "built_at": None,
+                        "threshold": settings.RAG_WRITE_SCORE_THRESHOLD,
+                    }
         
         # ═══════════════════════════════════════════════════════════════
         # STEP 3: CREATE EXECUTION PLAN WITH LLM
         # ═══════════════════════════════════════════════════════════════
         
-        logger.info("🧠 Creating execution plan with LLM...")
-        
-        plan = llm_service.plan_excel_operations(
-            user_intent=user_message,
-            context={
-                "file_id": file_id,
-                "sheet_name": sheet_name,
-                "session_summary": session_summary,
-                "available_files": available_files,
-                "recent_operations": recent_operations,
-                "column_headers": column_headers
-            },
-            provider=provider
-        )
-        
-        logger.info(f"📝 Plan created with {len(plan['steps'])} step(s)")
+        if pending_write_plan:
+            plan = {
+                "steps": pending_write_plan.get("planned_steps", []),
+            }
+            logger.info(f"📝 Using confirmed pending plan with {len(plan['steps'])} step(s)")
+        else:
+            logger.info("🧠 Creating execution plan with LLM...")
+
+            plan = llm_service.plan_excel_operations(
+                user_intent=user_message,
+                context={
+                    "file_id": file_id,
+                    "sheet_name": sheet_name,
+                    "session_summary": session_summary,
+                    "available_files": available_files,
+                    "recent_operations": recent_operations,
+                    "column_headers": column_headers,
+                    "write_rag_evidence": write_rag_evidence,
+                },
+                provider=provider
+            )
+
+            logger.info(f"📝 Plan created with {len(plan['steps'])} step(s)")
+
+        mutating_steps = _get_mutating_steps(plan.get("steps", []))
+        write_risk = {"requires_confirmation": False, "reasons": []}
+        if write_request_detected and not pending_write_plan:
+            write_risk = _evaluate_write_risk(
+                write_rag_evidence=write_rag_evidence,
+                mutating_steps=mutating_steps,
+            )
+
+        if (
+            write_request_detected
+            and
+            mutating_steps
+            and write_risk.get("requires_confirmation")
+            and not _contains_write_confirmation(user_message)
+        ):
+            logger.warning(
+                f"🛡️ Write plan requires confirmation. Reasons: {write_risk.get('reasons', [])}"
+            )
+
+            response_text = _build_write_confirmation_response(
+                plan_steps=mutating_steps,
+                reasons=write_risk.get("reasons", []),
+                evidence=write_rag_evidence,
+            )
+
+            assistant_message = Message(
+                session_id=session_id,
+                role="assistant",
+                content=response_text,
+                meta_data=json.dumps(
+                    {
+                        "confirmation_required": True,
+                        "risk_reasons": write_risk.get("reasons", []),
+                        "planned_steps": mutating_steps,
+                        "write_rag_evidence": write_rag_evidence,
+                        "file_id": file_id,
+                        "sheet_name": sheet_name,
+                        "provider": provider,
+                    }
+                ),
+            )
+            db.add(assistant_message)
+            db.commit()
+
+            await ws_manager.broadcast(
+                {
+                    "type": "operations_complete",
+                    "session_id": session_id,
+                    "total_steps": len(plan.get("steps", [])),
+                    "successful_steps": 0,
+                }
+            )
+
+            return MessageResponse(
+                session_id=session_id,
+                response=response_text,
+                operations=[],
+                context={
+                    "file_id": file_id,
+                    "sheet_name": sheet_name,
+                    "provider": provider,
+                    "confirmation_required": True,
+                    "risk_reasons": write_risk.get("reasons", []),
+                },
+            )
         
         # ═══════════════════════════════════════════════════════════════
         # STEP 4: EXECUTE EACH STEP IN THE PLAN
@@ -690,6 +898,17 @@ async def _handle_excel_operation(
         
         logger.info("💬 Formatting response...")
 
+        successful_mutating_ops = [
+            op
+            for op in operation_results
+            if op.get("status") == "completed"
+            and str(op.get("tool", "")).strip().lower() in WRITE_GUARDRAIL_TOOLS
+        ]
+
+        rag_refresh_scheduled = False
+        if successful_mutating_ops and settings.RAG_ENABLED:
+            rag_refresh_scheduled = _schedule_rag_refresh_async("write-operation")
+
         executed_step_numbers = {op.get("step") for op in operation_results}
         executed_steps = [
             step for step in plan.get("steps", [])
@@ -714,7 +933,9 @@ async def _handle_excel_operation(
                 "operations": operation_results,
                 "file_id": file_id,
                 "sheet_name": sheet_name,
-                "provider": provider
+                "provider": provider,
+                "write_rag_evidence": write_rag_evidence,
+                "rag_refresh_scheduled": rag_refresh_scheduled,
             })
         )
         db.add(assistant_message)
@@ -760,7 +981,8 @@ async def _handle_excel_operation(
                 "sheet_name": sheet_name,
                 "provider": provider,
                 "total_operations": len(operation_results),
-                "successful": len([op for op in operation_results if op["status"] == "completed"])
+                "successful": len([op for op in operation_results if op["status"] == "completed"]),
+                "rag_refresh_scheduled": rag_refresh_scheduled,
             }
         )
     
@@ -823,11 +1045,12 @@ def _should_use_rag(
     if not settings.RAG_ENABLED:
         return False
 
-    if explicit_use_rag is not None:
-        return explicit_use_rag
-
+    # Excel operation requests are handled by the tool planner/executor path.
     if is_excel_operation:
         return False
+
+    if explicit_use_rag is not None:
+        return explicit_use_rag
 
     message_lower = message.lower()
     small_talk_markers = ["hello", "hi", "hey", "thanks", "thank you", "how are you"]
@@ -851,3 +1074,338 @@ def _should_use_rag(
     return bool(file_id) or message_lower.endswith("?") or any(
         marker in message_lower for marker in rag_markers
     )
+
+
+def _is_write_or_update_request(message: str) -> bool:
+    """Detect whether request intent likely mutates workbook data."""
+
+    message_lower = message.lower()
+    write_markers = [
+        "update",
+        "modify",
+        "change",
+        "set",
+        "write",
+        "replace",
+        "delete",
+        "remove",
+        "insert",
+        "add row",
+        "add column",
+        "rename",
+        "fill",
+        "apply formula",
+        "create chart",
+    ]
+
+    return any(marker in message_lower for marker in write_markers)
+
+
+def _contains_write_confirmation(message: str) -> bool:
+    """Allow users to explicitly proceed when a write plan is risky."""
+
+    message_lower = message.lower()
+    confirmation_markers = [
+        "confirm execute write",
+        "confirm write",
+        "proceed anyway",
+        "run anyway",
+        "force update",
+        "yes proceed",
+    ]
+
+    return any(marker in message_lower for marker in confirmation_markers)
+
+
+def _get_pending_write_confirmation(db: Session, session_id: str) -> Optional[Dict[str, Any]]:
+    """Get the latest pending confirmation payload, if present."""
+
+    last_assistant_message = db.query(Message).filter(
+        Message.session_id == session_id,
+        Message.role == "assistant",
+    ).order_by(Message.timestamp.desc()).first()
+
+    if not last_assistant_message or not last_assistant_message.meta_data:
+        return None
+
+    try:
+        meta_data = json.loads(last_assistant_message.meta_data)
+    except Exception:
+        return None
+
+    if not isinstance(meta_data, dict) or not meta_data.get("confirmation_required"):
+        return None
+
+    planned_steps_raw = meta_data.get("planned_steps")
+    if not isinstance(planned_steps_raw, list) or not planned_steps_raw:
+        return None
+
+    planned_steps: List[Dict[str, Any]] = []
+    for index, step in enumerate(planned_steps_raw, start=1):
+        if not isinstance(step, dict):
+            continue
+
+        normalized_step = dict(step)
+        if "step" not in normalized_step:
+            normalized_step["step"] = index
+        planned_steps.append(normalized_step)
+
+    if not planned_steps:
+        return None
+
+    return {
+        "planned_steps": planned_steps,
+        "file_id": meta_data.get("file_id"),
+        "sheet_name": meta_data.get("sheet_name"),
+        "provider": meta_data.get("provider"),
+        "write_rag_evidence": meta_data.get("write_rag_evidence"),
+    }
+
+
+def _get_mutating_steps(plan_steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Extract mutating steps from planned operations."""
+
+    mutating: List[Dict[str, Any]] = []
+    for step in plan_steps:
+        tool_name = str(step.get("tool", "")).strip().lower()
+        if tool_name in WRITE_GUARDRAIL_TOOLS:
+            mutating.append(step)
+    return mutating
+
+
+def _evaluate_write_risk(
+    write_rag_evidence: Optional[Dict[str, Any]],
+    mutating_steps: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Determine whether write plan should require explicit confirmation."""
+
+    reasons: List[str] = []
+
+    if not mutating_steps:
+        return {"requires_confirmation": False, "reasons": reasons}
+
+    if not settings.RAG_WRITE_ENABLED:
+        return {"requires_confirmation": False, "reasons": reasons}
+
+    if not isinstance(write_rag_evidence, dict):
+        reasons.append("Write evidence is unavailable for this request.")
+        return {"requires_confirmation": True, "reasons": reasons}
+
+    if not write_rag_evidence.get("enabled", False):
+        reasons.append("Write evidence retrieval is disabled or unavailable.")
+
+    for warning in write_rag_evidence.get("warnings", []) or []:
+        if isinstance(warning, str) and warning.strip():
+            reasons.append(warning.strip())
+
+    top_score_raw = write_rag_evidence.get("top_score")
+    threshold = float(write_rag_evidence.get("threshold") or settings.RAG_WRITE_SCORE_THRESHOLD)
+
+    if top_score_raw is None:
+        reasons.append("No retrieval confidence score is available.")
+    else:
+        try:
+            top_score = float(top_score_raw)
+            if top_score < threshold:
+                reasons.append(
+                    f"Top retrieval confidence ({top_score:.3f}) is below threshold ({threshold:.3f})."
+                )
+        except (TypeError, ValueError):
+            reasons.append("Retrieval confidence score is invalid.")
+
+    confident_hits = int(write_rag_evidence.get("confident_hits") or 0)
+    if confident_hits < settings.RAG_WRITE_MIN_CONFIDENT_HITS:
+        reasons.append(
+            f"Only {confident_hits} confident hit(s); minimum is {settings.RAG_WRITE_MIN_CONFIDENT_HITS}."
+        )
+
+    estimated_rows = int(write_rag_evidence.get("estimated_rows") or 0)
+    high_impact_tools = {"bulk_update_all", "delete_rows_by_index", "delete_columns", "write_range"}
+    contains_high_impact = any(
+        str(step.get("tool", "")).strip().lower() in high_impact_tools
+        for step in mutating_steps
+    )
+    if contains_high_impact and estimated_rows > settings.RAG_WRITE_MAX_AFFECTED_ROWS_WARNING:
+        reasons.append(
+            f"Estimated affected rows ({estimated_rows}) exceed warning threshold "
+            f"({settings.RAG_WRITE_MAX_AFFECTED_ROWS_WARNING})."
+        )
+
+    return {
+        "requires_confirmation": bool(reasons),
+        "reasons": reasons,
+    }
+
+
+def _build_write_confirmation_response(
+    plan_steps: List[Dict[str, Any]],
+    reasons: List[str],
+    evidence: Optional[Dict[str, Any]],
+) -> str:
+    """Create a confirmation prompt for potentially risky write plans."""
+
+    contains_global_step = any(_is_global_write_step(step) for step in plan_steps)
+
+    lines: List[str] = [
+        "I prepared a write/update plan. Confirmation is required before execution because it can modify workbook data.",
+        "",
+        "Planned write steps:",
+    ]
+
+    for step in plan_steps:
+        impact_hint = _describe_step_impact(step)
+        impact_suffix = f" ({impact_hint})" if impact_hint else ""
+        lines.append(
+            f"- Step {step.get('step')}: {step.get('tool')} - {step.get('description', 'No description')}{impact_suffix}"
+        )
+
+    impact_lines = _build_write_impact_summary(plan_steps=plan_steps, evidence=evidence)
+    if impact_lines:
+        lines.extend(["", "Execution impact summary:"])
+        lines.extend([f"- {item}" for item in impact_lines])
+
+    if reasons:
+        lines.extend(["", "Risk signals:"])
+        for reason in reasons:
+            lines.append(f"- {reason}")
+
+    if contains_global_step:
+        lines.extend(
+            [
+                "",
+                "Why this warning can appear for broad updates:",
+                "- Retrieval confidence is semantic and row-snippet based.",
+                "- Broad requests like 'update all dates' may score low even when the instruction is precise.",
+                "- This is a safety confirmation, not a detected execution failure.",
+            ]
+        )
+
+    if isinstance(evidence, dict):
+        summary = str(evidence.get("summary") or "").strip()
+        if summary:
+            lines.extend(["", "Retrieved evidence preview:", summary])
+
+    lines.extend(
+        [
+            "",
+            "Reply with 'confirm execute write' to run this plan as-is, or refine your request with exact column/filter details.",
+        ]
+    )
+
+    return "\n".join(lines)
+
+
+def _is_global_write_step(step: Dict[str, Any]) -> bool:
+    """Detect whether a planned write step likely affects many/all rows."""
+
+    tool_name = str(step.get("tool", "")).strip().lower()
+    if tool_name in {"bulk_update_all", "fill_column", "write_range", "batch_update"}:
+        return True
+
+    if tool_name == "bulk_update":
+        params = step.get("parameters", {}) if isinstance(step.get("parameters"), dict) else {}
+        filter_column = params.get("filter_column")
+        filter_value = params.get("filter_value")
+        if not filter_column or filter_value in (None, ""):
+            return True
+
+    return False
+
+
+def _describe_step_impact(step: Dict[str, Any]) -> str:
+    """Return a concise, human-readable impact hint for a planned write step."""
+
+    params = step.get("parameters", {}) if isinstance(step.get("parameters"), dict) else {}
+    tool_name = str(step.get("tool", "")).strip().lower()
+
+    if tool_name == "bulk_update_all":
+        column = params.get("column")
+        value = params.get("value")
+        if column and value is not None:
+            return f"all rows: set {column} = {value}"
+        if column:
+            return f"all rows in column {column}"
+        return "all rows in the target sheet"
+
+    if tool_name == "bulk_update":
+        column = params.get("column")
+        value = params.get("value")
+        filter_column = params.get("filter_column")
+        filter_value = params.get("filter_value")
+        if filter_column and filter_value not in (None, ""):
+            return f"rows where {filter_column} = {filter_value}: set {column} = {value}"
+        return "multi-row update"
+
+    if tool_name == "update_by_search":
+        search_column = params.get("search_column")
+        search_value = params.get("search_value")
+        update_column = params.get("update_column")
+        return f"find {search_column} = {search_value}, update {update_column}"
+
+    if tool_name == "fill_column":
+        column_name = params.get("column_name") or params.get("column")
+        fill_type = params.get("fill_type")
+        if column_name and fill_type:
+            return f"fill column {column_name} ({fill_type})"
+        if column_name:
+            return f"fill column {column_name}"
+
+    return ""
+
+
+def _build_write_impact_summary(
+    plan_steps: List[Dict[str, Any]],
+    evidence: Optional[Dict[str, Any]],
+) -> List[str]:
+    """Build user-facing impact lines for write confirmation responses."""
+
+    summary_lines: List[str] = []
+
+    if any(_is_global_write_step(step) for step in plan_steps):
+        summary_lines.append("Scope appears broad (likely many or all rows affected).")
+    else:
+        summary_lines.append("Scope appears targeted (specific rows/conditions).")
+
+    if isinstance(evidence, dict):
+        estimated_rows = evidence.get("estimated_rows")
+        if estimated_rows is not None:
+            try:
+                summary_lines.append(f"Estimated affected rows from retrieval evidence: {int(estimated_rows)}.")
+            except (TypeError, ValueError):
+                pass
+
+        top_score = evidence.get("top_score")
+        threshold = evidence.get("threshold")
+        try:
+            if top_score is not None and threshold is not None:
+                summary_lines.append(
+                    f"Top retrieval confidence: {float(top_score):.3f} (threshold: {float(threshold):.3f})."
+                )
+        except (TypeError, ValueError):
+            pass
+
+    return summary_lines
+
+
+def _schedule_rag_refresh_async(reason: str) -> bool:
+    """Schedule non-blocking RAG refresh after successful write operations."""
+
+    if not settings.RAG_ENABLED:
+        return False
+
+    async def _runner() -> None:
+        try:
+            result = await asyncio.to_thread(rag_service.refresh_index)
+            logger.info(
+                f"RAG index synced after {reason} "
+                f"({result.get('indexed_chunks', 0)} chunks across {result.get('indexed_files', 0)} files)"
+            )
+        except Exception as exc:
+            logger.error(f"Failed to sync RAG index after {reason}: {exc}")
+
+    try:
+        asyncio.create_task(_runner())
+        return True
+    except Exception as exc:
+        logger.error(f"Failed to schedule RAG refresh task after {reason}: {exc}")
+        return False

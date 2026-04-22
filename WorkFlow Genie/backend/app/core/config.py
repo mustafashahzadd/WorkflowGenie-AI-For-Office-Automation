@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     RAG_CHUNK_OVERLAP: int = 80
     RAG_TOP_K: int = 4
     RAG_MAX_ROWS_PER_SHEET: int = 2000
+
+    # RAG write-safety settings
+    RAG_WRITE_ENABLED: bool = True
+    RAG_WRITE_TOP_K: int = 5
+    RAG_WRITE_SCORE_THRESHOLD: float = 0.7
+    RAG_WRITE_MIN_CONFIDENT_HITS: int = 2
+    RAG_WRITE_MAX_AFFECTED_ROWS_WARNING: int = 100
     
     # Logging
     LOG_LEVEL: str = "INFO"

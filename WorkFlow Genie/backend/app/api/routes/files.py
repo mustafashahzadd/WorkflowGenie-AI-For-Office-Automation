@@ -3,7 +3,7 @@ File Management APIs for WorkflowGenie
 Handles Excel file upload, download, and metadata
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, BackgroundTasks, Response
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -103,6 +103,14 @@ def refresh_rag_index_safe(action: str) -> None:
         )
     except Exception as exc:
         logger.error(f"Failed to sync RAG index after {action}: {exc}")
+
+
+def add_no_cache_headers(response: Response) -> None:
+    """Prevent stale browser/proxy caching for mutable workbook resources."""
+
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
 
 
 def validate_excel_payload(filename: str, content: bytes) -> dict:
@@ -226,6 +234,7 @@ async def upload_file(
 @router.get("/download/{file_id}")
 async def download_file(
     file_id: str,
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -263,6 +272,8 @@ async def download_file(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found on disk"
         )
+
+    add_no_cache_headers(response)
     
     # Return file for download
     return FileResponse(
@@ -270,7 +281,10 @@ async def download_file(
         filename=filename,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
         }
     )
 
@@ -501,6 +515,7 @@ async def delete_file(
 @router.get("/preview/{file_id}")
 async def preview_file(
     file_id: str,
+    response: Response,
     sheet_name: str = "Sheet1",
     limit: int = 10,
     current_user: User = Depends(get_current_user),
@@ -513,19 +528,28 @@ async def preview_file(
     """
     
     try:
+        add_no_cache_headers(response)
+
         # Use read_data to get preview
         result = await mcp_service.read_data(
             file_id=file_id,
             sheet_name=sheet_name,
-            limit=limit
+            max_rows=limit
         )
+
+        metadata = await mcp_service.get_file_metadata(file_id)
         
         return {
             "file_id": file_id,
             "sheet_name": sheet_name,
             "data": result.get("data", []),
             "rows_shown": result.get("rows", 0),
-            "total_columns": result.get("columns", 0)
+            "total_columns": result.get("columns", 0),
+            "chart_count": result.get("chart_count", 0),
+            "has_charts": result.get("has_charts", False),
+            "embedded_chart_count": metadata.get("embedded_chart_count", 0),
+            "chartsheet_count": metadata.get("chartsheet_count", 0),
+            "file_modified": metadata.get("modified"),
         }
     
     except Exception as e:
