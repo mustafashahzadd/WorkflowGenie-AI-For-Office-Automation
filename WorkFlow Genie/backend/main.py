@@ -14,7 +14,7 @@ from app.core.database import engine, Base
 from app.core import models  # Import models to register them
 
 # Import all routers (REMOVED tasks, ADDED history)
-from app.api.routes import auth, users, files, chat, sessions, excel, history
+from app.api.routes import auth, users, files, chat, sessions, excel, history, rag
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -94,6 +94,9 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 
 # Excel (Direct operations)
 app.include_router(excel.router, prefix="/api/excel", tags=["excel"])
+
+# RAG (Read-only Q&A over Excel files)
+app.include_router(rag.router)
 
 # ============================================================================
 # BASIC ENDPOINTS
