@@ -3,6 +3,8 @@ MCP Service - Excel Operations via openpyxl - COMPLETE VERSION
 Handles all Excel file manipulation - Basic + Advanced Tools
 """
 
+import inspect
+import traceback
 import openpyxl
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter, column_index_from_string
@@ -33,211 +35,168 @@ class MCPService:
 
     
     async def execute_tool(self, tool_name: str, parameters: Dict[str, Any], session_id: str = None, db = None) -> Dict:
-        """Execute an MCP tool"""
+        """Execute an MCP tool with automatic parameter filtering via inspect."""
         
         start_time = time.time()
         
-        # Normalize parameter names (handle LLM variations)
-        if 'range' in parameters:
-            range_value = parameters.get('range')
+        # ── FIX SHEET NAME CASING ──
+        # openpyxl is case-sensitive ("sheet1" != "Sheet1").
+        # Use zipfile directly to read sheetnames without keeping a file handle open,
+        # which avoids file-locking issues on Windows when a subsequent save occurs.
+        if "sheet_name" in parameters and "file_id" in parameters:
+            try:
+                import zipfile as _zf, xml.etree.ElementTree as _ET
+                sn = parameters["sheet_name"]
+                fid = parameters["file_id"]
+                if sn and fid:
+                    fp = self._get_filepath(fid)
+                    sn_lower = str(sn).strip().lower()
+                    with _zf.ZipFile(fp, 'r') as _z:
+                        with _z.open('xl/workbook.xml') as _wbxml:
+                            _tree = _ET.parse(_wbxml)
+                    _ns = {'ns': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                    for _sh in _tree.findall('.//ns:sheet', _ns):
+                        actual_name = _sh.get('name', '')
+                        if actual_name.lower() == sn_lower:
+                            if actual_name != sn:
+                                logger.info(f"Fixed sheet_name casing: '{sn}' -> '{actual_name}'")
+                            parameters["sheet_name"] = actual_name
+                            break
+            except Exception:
+                pass  # Non-critical — let the tool handle the error
+        
+        # ── SMART PARAMETER RESOLUTION ──
+        # Instead of dumb hardcoded aliases, we:
+        # 1. Run tool-aware normalize_parameters from llm_service
+        # 2. Use inspect to match remaining unrecognized params to the method signature
+        # This handles ANY random LLM output for ANY tool automatically.
 
-            range_notation_tools = {
-                "read_range",
-                "conditional_formatting",
-                "set_cell_style",
-                "add_data_validation",
-                "set_print_area",
-                "create_named_range",
-                "fill_down",
-                "set_number_format",
-                "create_excel_table"
+        from app.services.llm_service import normalize_parameters
+
+        # ── Reverse alias map: for each method param, what LLM names could it have? ──
+        PARAM_REVERSE_MAP = {
+            "column_name": ["column", "col", "col_name", "source_col"],
+            "column": ["column_name", "col", "col_name", "column_index", "column_letter"],
+            "cell_address": ["cell", "cell_ref", "address"],
+            "range_notation": ["range", "cell_range", "data_range"],
+            "start_cell": ["range", "start", "from_cell"],
+            "row_index": ["row", "row_number", "row_num"],
+            "amount": ["count", "num", "number", "quantity"],
+            "person_name": ["name", "student_name", "employee_name"],
+            "rename_map": ["mappings", "mapping", "renames"],
+            "case_style": ["case", "style", "text_case"],
+            "sort_by": ["sort_column", "sort_columns", "order_by"],
+            "target_column": ["target_col", "target", "output_column", "result_column", "dest_column"],
+            "new_column_name": ["new_col", "new_col_name", "new_name"],
+            "old_name": ["old_column_name", "old_col", "old_col_name"],
+            "value": ["fill_value", "val", "cell_value"],
+            "aggfunc": ["agg", "aggregation", "aggregate"],
+            "group_by": ["group", "groupby", "group_column"],
+            "x_column": ["x", "x_col", "x_axis"],
+            "y_column": ["y", "y_col", "y_axis"],
+            "filename": ["file_name", "name", "workbook_name"],
+            "source_sheet": ["from_sheet", "data_sheet", "base_sheet", "input_sheet"],
+            "doc_type": ["type", "document_type", "report_type"],
+        }
+
+        def _safe_call(method, params: Dict[str, Any], extra_kwargs: Dict[str, Any] = None) -> Any:
+            """
+            Smart parameter matching:
+            1. Normalize via LLM alias map (tool-aware)
+            2. Direct match to method signature
+            3. Fuzzy match unrecognized params using PARAM_REVERSE_MAP
+            4. Fill missing required params from unmatched values
+            """
+            sig = inspect.signature(method)
+            valid_names = set(sig.parameters.keys()) - {"self"}
+            required_names = {
+                name for name, p in sig.parameters.items()
+                if p.default is inspect.Parameter.empty and name != "self"
             }
 
-            if tool_name in range_notation_tools and 'range_notation' not in parameters:
-                parameters['range_notation'] = range_value
+            has_var_keyword = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in sig.parameters.values()
+            )
 
-            if tool_name == "write_range" and 'start_cell' not in parameters and isinstance(range_value, str):
-                parameters['start_cell'] = range_value.split(':')[0]
+            if has_var_keyword:
+                call_params = dict(params)
+            else:
+                # Step 1: Tool-aware normalization
+                normalized = normalize_parameters(tool_name, dict(params))
+                
+                # Step 2: Direct match
+                call_params = {}
+                unmatched = {}
+                for key, value in normalized.items():
+                    if key in valid_names:
+                        call_params[key] = value
+                    else:
+                        unmatched[key] = value
 
-            parameters.pop('range', None)
-        if 'cell' in parameters and 'cell_address' not in parameters:
-            parameters['cell_address'] = parameters.pop('cell')
-        if 'name' in parameters and 'person_name' not in parameters and 'filename' not in parameters:
-            parameters['person_name'] = parameters.pop('name')
-        if 'row' in parameters and 'row_index' not in parameters:
-            parameters['row_index'] = parameters.pop('row')
-        if 'count' in parameters and 'amount' not in parameters:
-            parameters['amount'] = parameters.pop('count')
-        if 'column_name' in parameters and 'column' not in parameters:
-            parameters['column'] = parameters.pop('column_name')
-        if 'mappings' in parameters and 'rename_map' not in parameters:
-            parameters['rename_map'] = parameters.pop('mappings')
-        if 'fill_value' in parameters and 'value' not in parameters:
-            parameters['value'] = parameters.pop('fill_value')
-        if 'case' in parameters and 'case_style' not in parameters:
-            parameters['case_style'] = parameters.pop('case')
+                # Step 3: Try to match unmatched params to missing method params
+                missing = valid_names - set(call_params.keys())
+                if unmatched and missing:
+                    for method_param in list(missing):
+                        # Check if any unmatched key is a known alias for this method param
+                        aliases = PARAM_REVERSE_MAP.get(method_param, [])
+                        for alias in aliases:
+                            if alias in unmatched:
+                                call_params[method_param] = unmatched.pop(alias)
+                                missing.discard(method_param)
+                                logger.info(f"🔄 Mapped '{alias}' → '{method_param}' for {tool_name}")
+                                break
 
-        if tool_name == "delete_columns" and isinstance(parameters.get('columns'), str):
-            parameters['columns'] = [parameters['columns']]
+                # Step 4: If still missing required params, try to fill from remaining unmatched
+                still_missing_required = required_names - set(call_params.keys())
+                if still_missing_required and unmatched:
+                    # Heuristic: if only 1 required param missing and 1 unmatched value, use it
+                    for req_param in list(still_missing_required):
+                        if len(unmatched) == 1:
+                            key, val = next(iter(unmatched.items()))
+                            call_params[req_param] = val
+                            logger.info(f"🔄 Last-resort mapped '{key}' → '{req_param}' for {tool_name}")
+                            unmatched.pop(key)
+                            break
+                        # Also try substring matching (e.g., "columns" → "column")
+                        for ukey, uval in list(unmatched.items()):
+                            if req_param in ukey or ukey in req_param:
+                                call_params[req_param] = uval
+                                logger.info(f"🔄 Substring matched '{ukey}' → '{req_param}' for {tool_name}")
+                                unmatched.pop(ukey)
+                                break
+
+                # Log any truly dropped params
+                for key in unmatched:
+                    logger.warning(f"Dropping param '{key}' for {tool_name} (not in signature)")
+
+            # Special: ensure delete_columns 'columns' is always a list
+            if tool_name == "delete_columns" and isinstance(call_params.get("columns"), str):
+                call_params["columns"] = [call_params["columns"]]
+
+            # Special: write_range — extract start_cell from range if needed
+            if tool_name == "write_range" and "start_cell" not in call_params:
+                for key in ("range", "range_notation"):
+                    if key in call_params and isinstance(call_params[key], str):
+                        call_params["start_cell"] = call_params.pop(key).split(":")[0]
+                        break
+
+            # Merge extra kwargs (session_id, db) if method accepts them
+            if extra_kwargs:
+                for k, v in extra_kwargs.items():
+                    if k in valid_names and v is not None:
+                        call_params[k] = v
+
+            return method(**call_params)
         
         try:
+            # ── Dynamic dispatch: resolve method by tool_name, call with filtered params ──
             if tool_name == "create_workbook":
-                result = await self.create_workbook(session_id=session_id, db=db, **parameters)
-            elif tool_name == "csv_to_excel":
-                result = await self.csv_to_excel(**parameters)
-            elif tool_name == "write_range":
-                result = await self.write_range(**parameters)
-            elif tool_name == "update_cell":
-                result = await self.update_cell(**parameters)
-            elif tool_name == "apply_formula":
-                result = await self.apply_formula(**parameters)
-            elif tool_name == "read_range":
-                result = await self.read_range(**parameters)
-            elif tool_name == "get_file_metadata":
-                result = await self.get_file_metadata(**parameters)
-            elif tool_name == "update_by_search":
-                result = await self.update_by_search(**parameters)
-            elif tool_name == "smart_update":
-                result = await self.smart_update(**parameters)
-            # NEW ADVANCED TOOLS
-            elif tool_name == "read_data":
-                result = await self.read_data(**parameters)
-            elif tool_name == "add_row":
-                result = await self.add_row(**parameters)
-            elif tool_name == "delete_row":
-                result = await self.delete_row(**parameters)
-            elif tool_name == "bulk_update":
-                result = await self.bulk_update(**parameters)
-            elif tool_name == "filter_data":
-                result = await self.filter_data(**parameters)
-            elif tool_name == "calculate_aggregate":
-                result = await self.calculate_aggregate(**parameters)
-            elif tool_name == "sort_data":
-                result = await self.sort_data(**parameters)
-            elif tool_name == "bulk_update_all":
-                result = await self.bulk_update_all(**parameters)
-            elif tool_name == "calculate_column":
-                result = await self.calculate_column(**parameters)
-            elif tool_name == "assign_grades":
-                result = await self.assign_grades(**parameters)
-            elif tool_name == "fill_column":
-                result = await self.fill_column(**parameters)
-            elif tool_name == "find_replace":
-                result = await self.find_replace(**parameters)
-            elif tool_name == "bulk_find_replace":
-                result = await self.bulk_find_replace(**parameters)
-            # DATA MANIPULATION TOOLS
-            elif tool_name == "pivot_table":
-                result = await self.pivot_table(**parameters)
-            elif tool_name == "vlookup":
-                result = await self.vlookup(**parameters)
-            elif tool_name == "hlookup":
-                result = await self.hlookup(**parameters)
-            elif tool_name == "remove_duplicates":
-                result = await self.remove_duplicates(**parameters)
-            elif tool_name == "transpose_data":
-                result = await self.transpose_data(**parameters)
-            elif tool_name == "split_column":
-                result = await self.split_column(**parameters)
-            elif tool_name == "merge_columns":
-                result = await self.merge_columns(**parameters)
-            elif tool_name == "fill_down":
-                result = await self.fill_down(**parameters)
-            elif tool_name == "auto_detect_headers":
-                result = await self.auto_detect_headers(**parameters)
-            # STATISTICAL/ANALYSIS TOOLS
-            elif tool_name == "descriptive_stats":
-                result = await self.descriptive_stats(**parameters)
-            elif tool_name == "conditional_aggregate":
-                result = await self.conditional_aggregate(**parameters)
-            elif tool_name == "correlation_matrix":
-                result = await self.correlation_matrix(**parameters)
-            elif tool_name == "frequency_distribution":
-                result = await self.frequency_distribution(**parameters)
-            elif tool_name == "percentile_rank":
-                result = await self.percentile_rank(**parameters)
-            # FORMATTING & PRESENTATION TOOLS
-            elif tool_name == "conditional_formatting":
-                result = await self.conditional_formatting(**parameters)
-            elif tool_name == "auto_fit_columns":
-                result = await self.auto_fit_columns(**parameters)
-            elif tool_name == "set_cell_style":
-                result = await self.set_cell_style(**parameters)
-            elif tool_name == "freeze_panes":
-                result = await self.freeze_panes(**parameters)
-            elif tool_name == "add_data_validation":
-                result = await self.add_data_validation(**parameters)
-            elif tool_name == "protect_sheet":
-                result = await self.protect_sheet(**parameters)
-            elif tool_name == "set_print_area":
-                result = await self.set_print_area(**parameters)
-            elif tool_name == "add_header_footer":
-                result = await self.add_header_footer(**parameters)
-            # IMPORT/EXPORT TOOLS
-            elif tool_name == "json_to_excel":
-                result = await self.json_to_excel(**parameters)
-            elif tool_name == "export_sheet_as_csv":
-                result = await self.export_sheet_as_csv(**parameters)
-            elif tool_name == "export_sheet_as_json":
-                result = await self.export_sheet_as_json(**parameters)
-            elif tool_name == "copy_sheet":
-                result = await self.copy_sheet(**parameters)
-            elif tool_name == "move_sheet":
-                result = await self.move_sheet(**parameters)
-            # DATA ENGINEERING TOOLS
-            elif tool_name == "join_sheets":
-                result = await self.join_sheets(**parameters)
-            elif tool_name == "append_sheets":
-                result = await self.append_sheets(**parameters)
-            elif tool_name == "unpivot_columns":
-                result = await self.unpivot_columns(**parameters)
-            elif tool_name == "create_excel_table":
-                result = await self.create_excel_table(**parameters)
-            elif tool_name == "fill_formula_down":
-                result = await self.fill_formula_down(**parameters)
-            elif tool_name == "set_number_format":
-                result = await self.set_number_format(**parameters)
-            elif tool_name == "standardize_dates":
-                result = await self.standardize_dates(**parameters)
-            elif tool_name == "validate_schema":
-                result = await self.validate_schema(**parameters)
-            # STRUCTURE & CLEANING TOOLS
-            elif tool_name == "insert_rows":
-                result = await self.insert_rows(**parameters)
-            elif tool_name == "delete_rows_by_index":
-                result = await self.delete_rows_by_index(**parameters)
-            elif tool_name == "insert_columns":
-                result = await self.insert_columns(**parameters)
-            elif tool_name == "delete_columns":
-                result = await self.delete_columns(**parameters)
-            elif tool_name == "rename_columns":
-                result = await self.rename_columns(**parameters)
-            elif tool_name == "fill_missing_values":
-                result = await self.fill_missing_values(**parameters)
-            elif tool_name == "standardize_text_case":
-                result = await self.standardize_text_case(**parameters)
-            elif tool_name == "trim_whitespace":
-                result = await self.trim_whitespace(**parameters)
-            # ADVANCED TOOLS
-            elif tool_name == "create_named_range":
-                result = await self.create_named_range(**parameters)
-            elif tool_name == "add_comment":
-                result = await self.add_comment(**parameters)
-            elif tool_name == "batch_update":
-                result = await self.batch_update(**parameters)
-            elif tool_name == "search_cells":
-                result = await self.search_cells(**parameters)
-            elif tool_name == "get_cell_history":
-                result = await self.get_cell_history(**parameters)
-            # CHART TOOLS
-            elif tool_name == "create_bar_chart":
-                result = await self.create_bar_chart(**parameters)
-            elif tool_name == "create_line_chart":
-                result = await self.create_line_chart(**parameters)
-            elif tool_name == "create_pie_chart":
-                result = await self.create_pie_chart(**parameters)
-            elif tool_name == "create_scatter_plot":
-                result = await self.create_scatter_plot(**parameters)
+                # Special case: needs session_id and db
+                result = await _safe_call(self.create_workbook, parameters, {"session_id": session_id, "db": db})
+            elif hasattr(self, tool_name):
+                method = getattr(self, tool_name)
+                result = await _safe_call(method, parameters)
             else:
                 raise ValueError(f"Unknown tool: {tool_name}")
             
@@ -251,8 +210,8 @@ class MCPService:
             
         except Exception as e:
             duration = int((time.time() - start_time) * 1000)
-            logger.error(f"Tool execution error ({tool_name}): {e}")
-            
+            logger.error(f"Tool execution error ({tool_name}): {e}\n{traceback.format_exc()}")
+
             return {
                 "success": False,
                 "error": str(e),
@@ -290,16 +249,26 @@ class MCPService:
         if db and session_id:
             try:
                 from app.core.models import ExcelFile
-                excel_file = ExcelFile(
-                    id=file_id,
-                    filename=filename,
-                    filepath=str(filepath),
-                    session_id=session_id
-                )
-                db.add(excel_file)
-                db.commit()
-                logger.info(f"Saved workbook to database: {file_id}")
+                # Check if session already has a file — update instead of duplicate insert
+                existing = db.query(ExcelFile).filter(ExcelFile.session_id == session_id).first()
+                if existing:
+                    existing.id = file_id
+                    existing.filename = filename
+                    existing.filepath = str(filepath)
+                    db.commit()
+                    logger.info(f"Updated existing session file record: {file_id}")
+                else:
+                    excel_file = ExcelFile(
+                        id=file_id,
+                        filename=filename,
+                        filepath=str(filepath),
+                        session_id=session_id
+                    )
+                    db.add(excel_file)
+                    db.commit()
+                    logger.info(f"Saved workbook to database: {file_id}")
             except Exception as e:
+                db.rollback()
                 logger.warning(f"Could not save to database: {e}")
         
         logger.info(f"Created workbook: {filename} with {len(sheets)} sheet(s)")
@@ -398,7 +367,18 @@ class MCPService:
                     value=value
                 )
                 cells_written += 1
-        
+
+        # Auto-fit columns that received data to prevent ### display
+        affected_cols = range(start_col, start_col + (len(data[0]) if data else 1))
+        for col_idx in affected_cols:
+            col_letter = get_column_letter(col_idx)
+            max_len = 0
+            for row_idx in range(1, ws.max_row + 1):
+                val = ws.cell(row=row_idx, column=col_idx).value
+                if val is not None:
+                    max_len = max(max_len, len(str(val)))
+            ws.column_dimensions[col_letter].width = min(max(max_len + 2, 10), 50)
+
         wb.save(filepath)
         
         logger.info(f"Wrote {cells_written} cells to {sheet_name}")
@@ -466,10 +446,18 @@ class MCPService:
             formula = '=' + formula
         
         ws[cell_address] = formula
+
+        # Auto-fit the column to prevent ### display
+        col_letter = ''.join(c for c in cell_address if c.isalpha())
+        if col_letter:
+            col_idx = column_index_from_string(col_letter.upper())
+            max_len = max((len(str(ws.cell(r, col_idx).value or "")) for r in range(1, ws.max_row + 1)), default=10)
+            ws.column_dimensions[col_letter.upper()].width = min(max(max_len + 4, 12), 50)
+
         wb.save(filepath)
-        
+
         logger.info(f"Applied formula to {cell_address}: {formula}")
-        
+
         return {
             "file_id": file_id,
             "sheet_name": sheet_name,
@@ -2476,6 +2464,98 @@ class MCPService:
             "message": f"Calculated correlation matrix for {len(columns)} columns"
         }
 
+    async def write_correlation_summary(
+        self,
+        file_id: str,
+        source_sheet: str,
+        columns: List[str],
+        target_sheet: str = "Analysis"
+    ) -> Dict:
+        """Compute correlation between columns and write results to a target sheet."""
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if source_sheet not in wb.sheetnames:
+            raise ValueError(f"Sheet '{source_sheet}' not found")
+
+        ws_src = wb[source_sheet]
+        header_row = self._find_header_row(ws_src)
+
+        headers = {}
+        for col_idx in range(1, ws_src.max_column + 1):
+            hdr = ws_src.cell(row=header_row, column=col_idx).value
+            if hdr:
+                headers[str(hdr).strip().lower()] = col_idx
+
+        col_indices = {}
+        for col_name in columns:
+            col_idx = headers.get(col_name.lower())
+            if not col_idx:
+                raise ValueError(f"Column '{col_name}' not found in '{source_sheet}'")
+            col_indices[col_name] = col_idx
+
+        # Collect rows where ALL columns have numeric values
+        rows_data = {col: [] for col in columns}
+        for row_idx in range(header_row + 1, ws_src.max_row + 1):
+            row_vals = {}
+            for col_name, col_idx in col_indices.items():
+                val = ws_src.cell(row=row_idx, column=col_idx).value
+                try:
+                    row_vals[col_name] = float(val) if val is not None else None
+                except (ValueError, TypeError):
+                    row_vals[col_name] = None
+            if all(v is not None for v in row_vals.values()):
+                for col_name in columns:
+                    rows_data[col_name].append(row_vals[col_name])
+
+        df = pd.DataFrame(rows_data)
+        corr = df.corr()
+
+        if target_sheet in wb.sheetnames:
+            ws_out = wb[target_sheet]
+        else:
+            ws_out = wb.create_sheet(target_sheet)
+
+        ws_out.delete_rows(1, ws_out.max_row)
+
+        ws_out.cell(row=1, column=1, value="Correlation Analysis Summary")
+        ws_out.cell(row=2, column=1, value="Source Sheet")
+        ws_out.cell(row=2, column=2, value=source_sheet)
+        ws_out.cell(row=3, column=1, value="Variables")
+        ws_out.cell(row=3, column=2, value=" vs ".join(columns))
+        ws_out.cell(row=4, column=1, value="Analysis Date")
+        ws_out.cell(row=4, column=2, value=str(pd.Timestamp.now().date()))
+        ws_out.cell(row=6, column=1, value="Correlation Matrix")
+
+        row_offset = 7
+        ws_out.cell(row=row_offset, column=1, value="")
+        for i, col in enumerate(corr.columns):
+            ws_out.cell(row=row_offset, column=i + 2, value=col)
+
+        for i, idx in enumerate(corr.index):
+            ws_out.cell(row=row_offset + 1 + i, column=1, value=idx)
+            for j, col in enumerate(corr.columns):
+                ws_out.cell(row=row_offset + 1 + i, column=j + 2, value=round(corr.loc[idx, col], 4))
+
+        if len(columns) == 2:
+            coeff = round(corr.loc[columns[0], columns[1]], 4)
+            ws_out.cell(row=row_offset + len(columns) + 2, column=1, value=f"Correlation between {columns[0]} and {columns[1]}")
+            ws_out.cell(row=row_offset + len(columns) + 2, column=2, value=coeff)
+
+        for col_cells in ws_out.columns:
+            max_len = max((len(str(c.value)) for c in col_cells if c.value), default=10)
+            ws_out.column_dimensions[get_column_letter(col_cells[0].column)].width = min(max_len + 4, 40)
+
+        wb.save(filepath)
+        return {
+            "file_id": file_id,
+            "source_sheet": source_sheet,
+            "target_sheet": target_sheet,
+            "columns": columns,
+            "correlation_matrix": {idx: {col: round(corr.loc[idx, col], 4) for col in corr.columns} for idx in corr.index},
+            "message": f"Correlation summary written to sheet '{target_sheet}'"
+        }
+
     async def frequency_distribution(
         self,
         file_id: str,
@@ -2612,8 +2692,22 @@ class MCPService:
         params: Dict
     ) -> Dict:
         """Apply conditional formatting: color scales, data bars, icon sets, cell rules"""
+        logger.debug(f"conditional_formatting called: range={range_notation!r}, rule_type={rule_type!r}, params={params!r}")
         from openpyxl.formatting.rule import CellIsRule, ColorScaleRule, DataBarRule, IconSetRule
         from openpyxl.styles import PatternFill, Font as XlFont
+        from openpyxl.worksheet.cell_range import MultiCellRange
+
+        # Normalize common rule_type aliases
+        _RULE_TYPE_ALIASES = {
+            "cell_value": "cell_is",
+            "cellvalue": "cell_is",
+            "cellis": "cell_is",
+            "cell": "cell_is",
+            "colorscale": "color_scale",
+            "databar": "data_bar",
+            "iconset": "icon_set",
+        }
+        rule_type = _RULE_TYPE_ALIASES.get(rule_type.lower().replace("-", "_").replace(" ", "_"), rule_type)
 
         filepath = self._get_filepath(file_id)
         wb = openpyxl.load_workbook(filepath)
@@ -2623,27 +2717,48 @@ class MCPService:
 
         ws = wb[sheet_name]
 
+        # Resolve range — normalise LLM range outputs to valid A1:B7 notation
+        cf_range = str(range_notation).strip()
+        from openpyxl.utils import get_column_letter, column_index_from_string
+        import re as _re
+        # Case 1: whole-column like "B:B" or "B:C" → "B2:C{max_row}"
+        _col_only = _re.match(r'^([A-Za-z]+):([A-Za-z]+)$', cf_range)
+        if _col_only:
+            cf_range = f"{_col_only.group(1).upper()}2:{_col_only.group(2).upper()}{ws.max_row}"
+        # Case 2: column header name (no digits, no colon) → find its letter
+        elif cf_range and ':' not in cf_range and not any(c.isdigit() for c in cf_range):
+            headers = [str(ws.cell(row=1, column=c).value or "").strip().lower()
+                       for c in range(1, ws.max_column + 1)]
+            col_name_lower = cf_range.lower()
+            if col_name_lower in headers:
+                col_idx = headers.index(col_name_lower) + 1
+                col_letter = get_column_letter(col_idx)
+                cf_range = f"{col_letter}2:{col_letter}{ws.max_row}"
+
         if rule_type == "cell_is":
             operator = params.get("operator", "greaterThan")
             formula_val = params.get("value", "0")
-            fill_color = params.get("fill_color", "00FF00")
+            fill_color = str(params.get("fill_color", "00FF00")).lstrip("#")
             font_color = params.get("font_color", None)
+            if font_color:
+                font_color = str(font_color).lstrip("#")
 
             fill = PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
             font = XlFont(color=font_color) if font_color else None
 
             rule = CellIsRule(operator=operator, formula=[str(formula_val)], fill=fill, font=font)
-            ws.conditional_formatting.add(range_notation, rule)
+            ws.conditional_formatting.add(str(cf_range).strip(), rule)
 
         elif rule_type == "color_scale":
             start_color = params.get("start_color", "FF0000")
             mid_color = params.get("mid_color", None)
             end_color = params.get("end_color", "00FF00")
+            mid_value = int(params.get("mid_value", 50))  # ensure int
 
             if mid_color:
                 rule = ColorScaleRule(
                     start_type='min', start_color=start_color,
-                    mid_type='percentile', mid_value=50, mid_color=mid_color,
+                    mid_type='percentile', mid_value=mid_value, mid_color=mid_color,
                     end_type='max', end_color=end_color
                 )
             else:
@@ -2651,17 +2766,19 @@ class MCPService:
                     start_type='min', start_color=start_color,
                     end_type='max', end_color=end_color
                 )
-            ws.conditional_formatting.add(range_notation, rule)
+            ws.conditional_formatting.add(str(cf_range).strip(), rule)
 
         elif rule_type == "data_bar":
             color = params.get("color", "638EC6")
             rule = DataBarRule(start_type='min', end_type='max', color=color)
-            ws.conditional_formatting.add(range_notation, rule)
+            ws.conditional_formatting.add(str(cf_range).strip(), rule)
 
         elif rule_type == "icon_set":
             icon_style = params.get("icon_style", "3Arrows")
-            rule = IconSetRule(icon_style=icon_style, type='num', values=[0, 33, 67])
-            ws.conditional_formatting.add(range_notation, rule)
+            raw_vals = params.get("values", [0, 33, 67])
+            int_vals = [int(v) for v in raw_vals]  # ensure int list
+            rule = IconSetRule(icon_style=icon_style, type='num', values=int_vals)
+            ws.conditional_formatting.add(str(cf_range).strip(), rule)
 
         else:
             raise ValueError(f"Unknown rule type: {rule_type}. Use 'cell_is', 'color_scale', 'data_bar', or 'icon_set'")
@@ -3482,6 +3599,14 @@ class MCPService:
             raise ValueError(f"Sheet '{sheet_name}' not found")
 
         ws = wb[sheet_name]
+
+        # Expand bare column letters like "D" or "D:D" to full range "D1:D{max_row}"
+        rng = str(range_notation).strip()
+        import re as _re2
+        if _re2.match(r'^[A-Za-z]+:[A-Za-z]+$', rng) or _re2.match(r'^[A-Za-z]+$', rng):
+            col_letter = rng.split(":")[0].upper()
+            rng = f"{col_letter}1:{col_letter}{ws.max_row or 1}"
+        range_notation = rng
 
         if ":" in range_notation:
             start_cell_addr, end_cell_addr = range_notation.split(":")
@@ -4354,7 +4479,9 @@ class MCPService:
         sheet_name: str,
         data_range: str,
         title: Optional[str] = None,
-        position: str = "E1"
+        position: str = "E1",
+        width_cm: Optional[float] = None,
+        height_cm: Optional[float] = None
     ) -> Dict:
         """Create a bar/column chart"""
         from openpyxl.chart import BarChart as XlBarChart, Reference
@@ -4366,6 +4493,30 @@ class MCPService:
             raise ValueError(f"Sheet '{sheet_name}' not found")
 
         ws = wb[sheet_name]
+
+        # Auto-expand column-only ranges like "A:B" or "A" to include all used rows
+        def _expand_col_range(rng: str) -> str:
+            """If rng lacks row numbers (e.g. 'A' or 'A:B'), append used-row bounds."""
+            rng = rng.strip()
+            parts = rng.split(':')
+            expanded = []
+            for p in parts:
+                p = p.strip()
+                if p and p.isalpha():  # pure column letter, no row
+                    p = f"{p}1"
+                expanded.append(p)
+            if len(expanded) == 1:
+                # Single cell given - extend to last used row
+                max_row = ws.max_row or 1
+                expanded.append(expanded[0][0] + str(max_row))  # same col, last row
+            return ':'.join(expanded)
+
+        data_range = ','.join(_expand_col_range(p) for p in str(data_range).split(',') if p.strip())
+        # If the expanded range still only covers 1 row height or col width, auto-use full sheet range
+        if not any(c.isdigit() for c in data_range):
+            max_row = ws.max_row or 1
+            max_col_letter = get_column_letter(ws.max_column or 2)
+            data_range = f"A1:{max_col_letter}{max_row}"
 
         range_parts = [part.strip() for part in str(data_range).split(',') if part.strip()]
 
@@ -4406,6 +4557,8 @@ class MCPService:
         chart.add_data(data, titles_from_data=titles_from_data)
         chart.set_categories(categories)
         chart.shape = 4
+        if width_cm: chart.width = width_cm
+        if height_cm: chart.height = height_cm
 
         ws.add_chart(chart, position)
         wb.save(filepath)
@@ -4426,7 +4579,9 @@ class MCPService:
         sheet_name: str,
         data_range: str,
         title: Optional[str] = None,
-        position: str = "E1"
+        position: str = "E1",
+        width_cm: Optional[float] = None,
+        height_cm: Optional[float] = None
     ) -> Dict:
         """Create a line chart"""
         from openpyxl.chart import LineChart as XlLineChart, Reference
@@ -4476,6 +4631,8 @@ class MCPService:
 
         chart.add_data(data, titles_from_data=titles_from_data)
         chart.set_categories(categories)
+        if width_cm: chart.width = width_cm
+        if height_cm: chart.height = height_cm
 
         ws.add_chart(chart, position)
         wb.save(filepath)
@@ -4496,7 +4653,9 @@ class MCPService:
         sheet_name: str,
         data_range: str,
         title: Optional[str] = None,
-        position: str = "E1"
+        position: str = "E1",
+        width_cm: Optional[float] = None,
+        height_cm: Optional[float] = None
     ) -> Dict:
         """Create a pie chart"""
         from openpyxl.chart import PieChart as XlPieChart, Reference
@@ -4552,6 +4711,8 @@ class MCPService:
 
         chart.add_data(data, titles_from_data=titles_from_data)
         chart.set_categories(categories)
+        if width_cm: chart.width = width_cm
+        if height_cm: chart.height = height_cm
 
         ws.add_chart(chart, position)
         wb.save(filepath)
@@ -4620,6 +4781,903 @@ class MCPService:
             "message": f"Created scatter plot '{title or 'Scatter Plot'}' at {position}"
         }
 
+    async def create_area_chart(
+        self, file_id: str, sheet_name: str, data_range: str,
+        title: Optional[str] = None, position: str = "E1"
+    ) -> Dict:
+        """Create a stacked area chart — good for showing volume trends over time."""
+        from openpyxl.chart import AreaChart as XlAreaChart, Reference
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        ws = wb[sheet_name]
+        sr, sc, er, ec = self._parse_range_address(data_range)
+        data = Reference(ws, min_col=sc+1, min_row=sr, max_col=ec, max_row=er)
+        cats = Reference(ws, min_col=sc, min_row=sr+1, max_row=er)
+        chart = XlAreaChart()
+        chart.title = title or "Area Chart"
+        chart.style = 10
+        chart.grouping = "standard"
+        chart.add_data(data, titles_from_data=True)
+        chart.set_categories(cats)
+        chart.width = 18; chart.height = 12
+        ws.add_chart(chart, position)
+        wb.save(filepath)
+        return {"message": f"Area chart '{title or 'Area Chart'}' created at {position}",
+                "chart_type": "area", "position": position}
+
+    async def create_radar_chart(
+        self, file_id: str, sheet_name: str, data_range: str,
+        title: Optional[str] = None, position: str = "E1"
+    ) -> Dict:
+        """Create a radar/spider chart — ideal for KPI comparisons and performance profiles."""
+        from openpyxl.chart import RadarChart as XlRadarChart, Reference
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        ws = wb[sheet_name]
+        sr, sc, er, ec = self._parse_range_address(data_range)
+        data = Reference(ws, min_col=sc+1, min_row=sr, max_col=ec, max_row=er)
+        cats = Reference(ws, min_col=sc, min_row=sr+1, max_row=er)
+        chart = XlRadarChart()
+        chart.title = title or "Radar Chart"
+        chart.type = "filled"
+        chart.style = 26
+        chart.add_data(data, titles_from_data=True)
+        chart.set_categories(cats)
+        chart.width = 18; chart.height = 14
+        ws.add_chart(chart, position)
+        wb.save(filepath)
+        return {"message": f"Radar chart '{title or 'Radar Chart'}' created at {position}",
+                "chart_type": "radar", "position": position}
+
+    async def create_bubble_chart(
+        self, file_id: str, sheet_name: str,
+        x_range: str, y_range: str, size_range: str,
+        title: Optional[str] = None, position: str = "E1"
+    ) -> Dict:
+        """Create a bubble chart — 3-dimensional data (X, Y, bubble size)."""
+        from openpyxl.chart import BubbleChart as XlBubbleChart, Reference, Series
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        ws = wb[sheet_name]
+        def _ref(rng):
+            sr, sc, er, ec = self._parse_range_address(rng)
+            return Reference(ws, min_col=sc, min_row=sr, max_col=ec, max_row=er)
+        chart = XlBubbleChart()
+        chart.title = title or "Bubble Chart"
+        chart.style = 18
+        series = Series(values=_ref(y_range), xvalues=_ref(x_range), zvalues=_ref(size_range), title="Series 1")
+        chart.series.append(series)
+        chart.width = 20; chart.height = 14
+        ws.add_chart(chart, position)
+        wb.save(filepath)
+        return {"message": f"Bubble chart '{title or 'Bubble Chart'}' created at {position}",
+                "chart_type": "bubble", "position": position}
+
+    async def create_combo_chart(
+        self, file_id: str, sheet_name: str,
+        bar_data_range: str, line_data_range: str,
+        title: Optional[str] = None, position: str = "E1"
+    ) -> Dict:
+        """Create a combo bar+line chart with dual axes — e.g. Revenue bars with Growth% line."""
+        from openpyxl.chart import BarChart as XlBarChart, LineChart as XlLineChart, Reference
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        ws = wb[sheet_name]
+        bsr, bsc, ber, bec = self._parse_range_address(bar_data_range)
+        lsr, lsc, ler, lec = self._parse_range_address(line_data_range)
+        # Categories from bar range column A
+        cats = Reference(ws, min_col=bsc, min_row=bsr+1, max_row=ber)
+        bar_data  = Reference(ws, min_col=bsc+1, min_row=bsr, max_col=bec, max_row=ber)
+        line_data = Reference(ws, min_col=lsc,   min_row=lsr, max_col=lec, max_row=ler)
+        bar = XlBarChart()
+        bar.type = "col"; bar.style = 10
+        bar.title = title or "Combo Chart"
+        bar.add_data(bar_data, titles_from_data=True)
+        bar.set_categories(cats)
+        line = XlLineChart()
+        line.add_data(line_data, titles_from_data=True)
+        line.set_categories(cats)
+        # Secondary Y axis
+        line.y_axis.axId = 200
+        line.y_axis.crosses = "max"
+        bar += line
+        bar.width = 20; bar.height = 14
+        ws.add_chart(bar, position)
+        wb.save(filepath)
+        return {"message": f"Combo chart '{title or 'Combo Chart'}' created at {position}",
+                "chart_type": "combo", "position": position}
+
+    async def create_histogram(
+        self, file_id: str, sheet_name: str, data_range: str,
+        bins: int = 10, title: Optional[str] = None, position: str = "E1"
+    ) -> Dict:
+        """Create a histogram — reads raw numeric data, computes bins, draws frequency chart."""
+        from openpyxl.chart import BarChart as XlBarChart, Reference
+        from openpyxl.styles import Font, PatternFill
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        ws = wb[sheet_name]
+        # Read numeric values from range
+        sr, sc, er, ec = self._parse_range_address(data_range)
+        values = []
+        for r in range(sr, er+1):
+            v = ws.cell(row=r, column=sc).value
+            if isinstance(v, (int, float)):
+                values.append(float(v))
+        if not values:
+            raise ValueError("No numeric values found in the specified range")
+        mn, mx = min(values), max(values)
+        width = (mx - mn) / bins
+        bin_edges = [mn + i * width for i in range(bins+1)]
+        bin_labels = [f"{bin_edges[i]:.1f}–{bin_edges[i+1]:.1f}" for i in range(bins)]
+        bin_counts = [0] * bins
+        for v in values:
+            idx = min(int((v - mn) / width), bins-1)
+            bin_counts[idx] += 1
+        # Write histogram data to a scratch area (far right, hidden-ish)
+        scratch_col = ws.max_column + 2
+        ws.cell(row=1, column=scratch_col, value="Bin")
+        ws.cell(row=1, column=scratch_col+1, value="Frequency")
+        for i, (lbl, cnt) in enumerate(zip(bin_labels, bin_counts), 2):
+            ws.cell(row=i, column=scratch_col, value=lbl)
+            ws.cell(row=i, column=scratch_col+1, value=cnt)
+        scratch_end_row = bins + 1
+        # Build chart from scratch data
+        data = Reference(ws, min_col=scratch_col+1, min_row=1, max_row=scratch_end_row)
+        cats = Reference(ws, min_col=scratch_col,   min_row=2, max_row=scratch_end_row)
+        chart = XlBarChart()
+        chart.title = title or "Histogram"
+        chart.type = "col"; chart.style = 10
+        chart.gapWidth = 0       # zero gap = histogram look
+        chart.add_data(data, titles_from_data=True)
+        chart.set_categories(cats)
+        chart.width = 20; chart.height = 14
+        ws.add_chart(chart, position)
+        wb.save(filepath)
+        return {"message": f"Histogram '{title or 'Histogram'}' created at {position} ({bins} bins)",
+                "chart_type": "histogram", "bins": bins, "values_count": len(values)}
+
+    # ==================== BATCH 2: DATE INTELLIGENCE / ANALYTICS / FORECASTING ====================
+
+    async def date_filter_analysis(
+        self, file_id: str, sheet_name: str, date_column: str,
+        period: str, value_columns: Optional[List[str]] = None,
+        aggfunc: str = "sum", output_sheet: Optional[str] = None
+    ) -> Dict:
+        """Filter data by date period (MTD/YTD/QTD/Q1-Q4/last_N_days/last_N_months) and aggregate."""
+        import re as _re
+        from datetime import timedelta
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        ws = wb[sheet_name]
+
+        headers, data = None, []
+        for i, row in enumerate(ws.iter_rows(values_only=True)):
+            if i == 0:
+                headers = [str(h) if h is not None else f"Col{j}" for j, h in enumerate(row)]
+            else:
+                data.append(dict(zip(headers, row)))
+        if not headers:
+            raise ValueError("Sheet has no data")
+
+        dc = next((h for h in headers if h.lower().strip() == date_column.lower().strip()), None)
+        if dc is None:
+            dc = next((h for h in headers if date_column.lower() in h.lower()), None)
+        if dc is None:
+            raise ValueError(f"Date column '{date_column}' not found. Available: {headers}")
+
+        today = datetime.now().date()
+        p = period.upper().strip()
+
+        def _q_bounds(q, year):
+            import calendar
+            sm = (q - 1) * 3 + 1
+            em = sm + 2
+            return date(year, sm, 1), date(year, em, calendar.monthrange(year, em)[1])
+
+        if p == "MTD":
+            start, end = today.replace(day=1), today
+        elif p == "YTD":
+            start, end = today.replace(month=1, day=1), today
+        elif p == "QTD":
+            q = (today.month - 1) // 3 + 1
+            start, _ = _q_bounds(q, today.year)
+            end = today
+        elif p in ("Q1", "Q2", "Q3", "Q4"):
+            start, end = _q_bounds(int(p[1]), today.year)
+        elif _re.match(r"LAST_(\d+)_DAYS?", p):
+            n = int(_re.search(r"(\d+)", p).group(1))
+            start, end = today - timedelta(days=n), today
+        elif _re.match(r"LAST_(\d+)_MONTHS?", p):
+            n = int(_re.search(r"(\d+)", p).group(1))
+            start, end = today - timedelta(days=n * 30), today
+        else:
+            raise ValueError(f"Unknown period '{period}'. Use MTD/YTD/QTD/Q1-Q4/last_30_days/last_3_months")
+
+        def _to_date(v):
+            if isinstance(v, datetime): return v.date()
+            if isinstance(v, date): return v
+            if isinstance(v, str):
+                for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+                    try: return datetime.strptime(v, fmt).date()
+                    except: pass
+            return None
+
+        filtered = [r for r in data if (d := _to_date(r.get(dc))) and start <= d <= end]
+
+        if not value_columns:
+            value_columns = [h for h in headers if h != dc and
+                             any(isinstance(r.get(h), (int, float)) for r in (filtered or data)[:5])]
+
+        agg = aggfunc.lower()
+        results = {}
+        for vc in value_columns:
+            vals = [r[vc] for r in filtered if isinstance(r.get(vc), (int, float))]
+            if not vals:
+                results[vc] = None; continue
+            if agg in ("avg", "mean", "average"): results[vc] = sum(vals) / len(vals)
+            elif agg == "count": results[vc] = len(vals)
+            elif agg == "min":   results[vc] = min(vals)
+            elif agg == "max":   results[vc] = max(vals)
+            else:                results[vc] = sum(vals)
+
+        if output_sheet:
+            from openpyxl.styles import Font as _F, PatternFill as _PF, Alignment as _A
+            if output_sheet in wb.sheetnames: del wb[output_sheet]
+            ws_o = wb.create_sheet(output_sheet)
+            ws_o.merge_cells("A1:C1")
+            t = ws_o["A1"]
+            t.value = f"{p} Analysis — {sheet_name}"
+            t.font = _F(name="Calibri", bold=True, size=13, color="FFFFFF")
+            t.fill = _PF("solid", fgColor="1F3864")
+            t.alignment = _A(horizontal="center", vertical="center")
+            ws_o.row_dimensions[1].height = 28
+            ws_o.merge_cells("A2:C2")
+            sub = ws_o["A2"]
+            sub.value = f"Period: {start} to {end}   |   Rows matched: {len(filtered)} / {len(data)}"
+            sub.font = _F(name="Calibri", size=10, italic=True, color="555555")
+            sub.alignment = _A(horizontal="center")
+            for ci, h in enumerate(["Metric", aggfunc.title(), "Count"], 1):
+                c = ws_o.cell(row=3, column=ci, value=h)
+                c.font = _F(name="Calibri", bold=True, size=10, color="FFFFFF")
+                c.fill = _PF("solid", fgColor="2E75B6")
+                c.alignment = _A(horizontal="center", vertical="center")
+            for ri, (vc, val) in enumerate(results.items(), 4):
+                alt = "F2F2F2" if ri % 2 == 0 else "FFFFFF"
+                ws_o.cell(row=ri, column=1, value=vc).fill = _PF("solid", fgColor=alt)
+                vc_cell = ws_o.cell(row=ri, column=2, value=round(val, 2) if isinstance(val, float) else val)
+                vc_cell.fill = _PF("solid", fgColor=alt)
+                if isinstance(val, (int, float)): vc_cell.number_format = "#,##0.00"
+                cnt = len([r for r in filtered if isinstance(r.get(vc), (int, float))])
+                ws_o.cell(row=ri, column=3, value=cnt).fill = _PF("solid", fgColor=alt)
+            ws_o.column_dimensions["A"].width = 24
+            ws_o.column_dimensions["B"].width = 16
+            ws_o.column_dimensions["C"].width = 10
+            ws_o.sheet_view.showGridLines = False
+
+        wb.save(filepath)
+        return {
+            "period": period, "date_range": f"{start} to {end}",
+            "rows_matched": len(filtered), "total_rows": len(data),
+            "aggfunc": aggfunc, "results": results,
+            "message": f"{p} analysis: {len(filtered)}/{len(data)} rows matched. Results: {results}"
+        }
+
+    async def compare_periods(
+        self, file_id: str, sheet_name: str, date_column: str,
+        value_column: str, period_type: str = "month",
+        aggfunc: str = "sum", output_sheet: Optional[str] = None
+    ) -> Dict:
+        """Build a period-over-period comparison table (month/quarter/year/week) with growth %."""
+        from collections import defaultdict
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        ws = wb[sheet_name]
+
+        headers, rows = None, []
+        for i, row in enumerate(ws.iter_rows(values_only=True)):
+            if i == 0:
+                headers = [str(h) if h else f"Col{j}" for j, h in enumerate(row)]
+            else:
+                rows.append(dict(zip(headers, row)))
+
+        def _to_date(v):
+            if isinstance(v, datetime): return v.date()
+            if isinstance(v, date): return v
+            if isinstance(v, str):
+                for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+                    try: return datetime.strptime(v, fmt).date()
+                    except: pass
+            return None
+
+        def _pkey(d, pt):
+            if pt == "month":   return f"{d.year}-{d.month:02d}"
+            if pt == "quarter": return f"{d.year}-Q{(d.month-1)//3+1}"
+            if pt == "year":    return str(d.year)
+            if pt == "week":    return f"{d.year}-W{d.isocalendar()[1]:02d}"
+            return f"{d.year}-{d.month:02d}"
+
+        def _fcol(name):
+            return next((h for h in headers if h.lower().strip() == name.lower().strip()),
+                   next((h for h in headers if name.lower() in h.lower()), None))
+
+        dc = _fcol(date_column)
+        vc = _fcol(value_column)
+        if not dc: raise ValueError(f"Date column '{date_column}' not found")
+        if not vc: raise ValueError(f"Value column '{value_column}' not found")
+
+        groups = defaultdict(list)
+        for r in rows:
+            d = _to_date(r.get(dc))
+            v = r.get(vc)
+            if d and isinstance(v, (int, float)):
+                groups[_pkey(d, period_type)].append(v)
+        if not groups:
+            raise ValueError("No valid date/value pairs found in sheet")
+
+        agg = aggfunc.lower()
+        def _agg(vals):
+            if agg in ("avg", "mean", "average"): return sum(vals) / len(vals)
+            if agg == "count": return len(vals)
+            if agg == "min":   return min(vals)
+            if agg == "max":   return max(vals)
+            return sum(vals)
+
+        periods_sorted = sorted(groups.keys())
+        period_vals = [(p, _agg(groups[p]), len(groups[p])) for p in periods_sorted]
+        result_rows = []
+        for i, (per, val, cnt) in enumerate(period_vals):
+            prev = period_vals[i-1][1] if i > 0 else None
+            growth = ((val - prev) / abs(prev) * 100) if prev else None
+            result_rows.append({"period": per, "value": val, "count": cnt, "growth_pct": growth})
+
+        out_name = output_sheet or f"{period_type.title()} Comparison"
+        if out_name in wb.sheetnames: del wb[out_name]
+        ws_o = wb.create_sheet(out_name)
+        from openpyxl.styles import Font as _F, PatternFill as _PF, Alignment as _A, Border as _B, Side as _S
+
+        ws_o.merge_cells("A1:D1")
+        t = ws_o["A1"]
+        t.value = f"{period_type.title()}-over-{period_type.title()} | {value_column}"
+        t.font = _F(name="Calibri", bold=True, size=13, color="FFFFFF")
+        t.fill = _PF("solid", fgColor="1F3864")
+        t.alignment = _A(horizontal="center", vertical="center")
+        ws_o.row_dimensions[1].height = 28
+
+        for ci, h in enumerate(["Period", aggfunc.title(), "Count", "Growth %"], 1):
+            c = ws_o.cell(row=2, column=ci, value=h)
+            c.font = _F(name="Calibri", bold=True, size=10, color="FFFFFF")
+            c.fill = _PF("solid", fgColor="2E75B6")
+            c.alignment = _A(horizontal="center", vertical="center")
+            c.border = _B(bottom=_S(style="medium"))
+
+        for ri, rr in enumerate(result_rows, 3):
+            alt = "F2F2F2" if ri % 2 == 0 else "FFFFFF"
+            g = rr["growth_pct"]
+            row_data = [rr["period"], rr["value"], rr["count"],
+                        f"{g:+.1f}%" if g is not None else "—"]
+            for ci, val in enumerate(row_data, 1):
+                cell = ws_o.cell(row=ri, column=ci, value=val)
+                cell.fill = _PF("solid", fgColor=alt)
+                cell.alignment = _A(horizontal="right" if ci > 1 else "left", vertical="center")
+                if ci == 2 and isinstance(val, (int, float)):
+                    cell.number_format = "#,##0.00"
+                if ci == 4 and g is not None:
+                    color = "1E6B3C" if g > 0 else ("C00000" if g < 0 else "555555")
+                    cell.font = _F(name="Calibri", size=10, color=color, bold=True)
+                else:
+                    cell.font = _F(name="Calibri", size=10)
+
+        ws_o.column_dimensions["A"].width = 18
+        ws_o.column_dimensions["B"].width = 16
+        ws_o.column_dimensions["C"].width = 10
+        ws_o.column_dimensions["D"].width = 12
+        ws_o.sheet_view.showGridLines = False
+        wb.save(filepath)
+        return {
+            "periods": len(period_vals), "period_type": period_type,
+            "output_sheet": out_name, "summary": result_rows,
+            "message": f"Period comparison written to '{out_name}' ({len(period_vals)} {period_type}s)"
+        }
+
+    async def create_waterfall_chart(
+        self, file_id: str, sheet_name: str, labels_range: str,
+        values_range: str, title: Optional[str] = None, position: str = "E1"
+    ) -> Dict:
+        """Create a waterfall chart (green=gains, red=losses) using stacked bar technique."""
+        from openpyxl.chart import BarChart, Reference
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        ws = wb[sheet_name]
+
+        lr, lc, lr2, _ = self._parse_range_address(labels_range)
+        vr, vc_col, vr2, _ = self._parse_range_address(values_range)
+        labels = [ws.cell(row=r, column=lc).value for r in range(lr, lr2 + 1)]
+        values = [float(ws.cell(row=r, column=vc_col).value or 0) for r in range(vr, vr2 + 1)]
+
+        bases, gains, losses = [], [], []
+        running = 0.0
+        for v in values:
+            if v >= 0:
+                bases.append(running); gains.append(v); losses.append(0)
+            else:
+                bases.append(running + v); gains.append(0); losses.append(abs(v))
+            running += v
+
+        sc = ws.max_column + 2
+        for ci, hdr in enumerate(["_Base", "Increase", "Decrease", "_Label"], sc):
+            ws.cell(row=1, column=ci, value=hdr)
+        for i, (b, g, l, lbl) in enumerate(zip(bases, gains, losses, labels), 2):
+            ws.cell(row=i, column=sc,   value=b)
+            ws.cell(row=i, column=sc+1, value=g)
+            ws.cell(row=i, column=sc+2, value=l)
+            ws.cell(row=i, column=sc+3, value=lbl)
+        end_row = len(values) + 1
+
+        chart = BarChart()
+        chart.type = "col"; chart.grouping = "stacked"
+        chart.title = title or "Waterfall Chart"
+        chart.style = 10; chart.width = 20; chart.height = 14
+
+        chart.add_data(Reference(ws, min_col=sc,   min_row=1, max_row=end_row), titles_from_data=True)
+        chart.add_data(Reference(ws, min_col=sc+1, min_row=1, max_row=end_row), titles_from_data=True)
+        chart.add_data(Reference(ws, min_col=sc+2, min_row=1, max_row=end_row), titles_from_data=True)
+        chart.set_categories(Reference(ws, min_col=sc+3, min_row=2, max_row=end_row))
+
+        try:
+            chart.series[0].graphicalProperties.solidFill = "FFFFFF"
+            chart.series[1].graphicalProperties.solidFill = "1E6B3C"
+            chart.series[2].graphicalProperties.solidFill = "C00000"
+        except Exception:
+            pass
+
+        ws.add_chart(chart, position)
+        wb.save(filepath)
+        return {
+            "message": f"Waterfall chart '{title or 'Waterfall Chart'}' created at {position}",
+            "chart_type": "waterfall", "items": len(values),
+            "net_total": round(running, 2), "position": position
+        }
+
+    async def forecast_trendline(
+        self, file_id: str, sheet_name: str, value_column: str,
+        periods: int = 3, label_column: Optional[str] = None,
+        method: str = "linear"
+    ) -> Dict:
+        """Extend a data series with N forecast values using OLS linear regression."""
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        ws = wb[sheet_name]
+
+        headers = [str(ws.cell(row=1, column=c).value or f"Col{c}") for c in range(1, ws.max_column + 1)]
+
+        def _fcol(name):
+            return next((i+1 for i, h in enumerate(headers) if h.lower().strip() == name.lower().strip()),
+                   next((i+1 for i, h in enumerate(headers) if name.lower() in h.lower()), None))
+
+        vc_idx = _fcol(value_column)
+        if vc_idx is None:
+            raise ValueError(f"Column '{value_column}' not found. Available: {headers}")
+
+        actuals, last_data_row = [], 1
+        for r in range(2, ws.max_row + 1):
+            v = ws.cell(row=r, column=vc_idx).value
+            if isinstance(v, (int, float)):
+                actuals.append(float(v))
+                last_data_row = r
+        if len(actuals) < 2:
+            raise ValueError("Need at least 2 numeric values for forecasting")
+
+        n = len(actuals)
+        x = list(range(n))
+        sx = sum(x); sy = sum(actuals)
+        sxy = sum(xi * yi for xi, yi in zip(x, actuals))
+        sx2 = sum(xi ** 2 for xi in x)
+        denom = n * sx2 - sx ** 2
+        slope = (n * sxy - sx * sy) / denom if denom else 0
+        intercept = (sy - slope * sx) / n
+        try:
+            y_mean = sy / n
+            ss_tot = sum((yi - y_mean) ** 2 for yi in actuals)
+            ss_res = sum((yi - (slope * xi + intercept)) ** 2 for xi, yi in zip(x, actuals))
+            r_sq = 1 - ss_res / ss_tot if ss_tot else 1.0
+        except Exception:
+            r_sq = None
+
+        lc_idx = _fcol(label_column) if label_column else None
+        existing_labels = []
+        if lc_idx:
+            for r in range(2, last_data_row + 1):
+                existing_labels.append(ws.cell(row=r, column=lc_idx).value)
+
+        def _next_label(labels, step):
+            import re as _r
+            if not labels: return f"Forecast {step}"
+            last = str(labels[-1]) if labels[-1] is not None else ""
+            MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+            for i, m in enumerate(MONTHS):
+                if last.lower().startswith(m.lower()):
+                    return MONTHS[(i + step) % 12]
+            if _r.match(r"^\d{4}$", last):
+                return str(int(last) + step)
+            q_m = _r.match(r"Q(\d)", last, _r.I)
+            if q_m:
+                return f"Q{((int(q_m.group(1))-1+step)%4)+1}"
+            return f"Forecast {step}"
+
+        from openpyxl.styles import Font as _F, PatternFill as _PF
+        forecast_vals = []
+        for i in range(1, periods + 1):
+            fy = round(slope * (n - 1 + i) + intercept, 2)
+            forecast_vals.append(fy)
+            write_row = last_data_row + i
+            cell = ws.cell(row=write_row, column=vc_idx, value=fy)
+            cell.font = _F(name="Calibri", italic=True, color="2E75B6", size=10)
+            cell.fill = _PF("solid", fgColor="EBF3FB")
+            if lc_idx:
+                ws.cell(row=write_row, column=lc_idx, value=f"{_next_label(existing_labels, i)} (F)")
+
+        wb.save(filepath)
+        return {
+            "slope": round(slope, 4), "intercept": round(intercept, 4),
+            "r_squared": round(r_sq, 4) if r_sq is not None else None,
+            "actuals_count": n, "periods_forecast": periods,
+            "forecast_values": forecast_vals,
+            "equation": f"y = {slope:.4f}x + {intercept:.4f}",
+            "message": (f"Forecast {periods} periods appended: {forecast_vals}. "
+                        f"Trend: y={slope:.2f}x+{intercept:.2f}" +
+                        (f", R²={r_sq:.3f}" if r_sq is not None else ""))
+        }
+
+    async def what_if_sensitivity(
+        self, file_id: str,
+        variable1_name: str = "Revenue",
+        variable1_values: Optional[List[float]] = None,
+        variable2_name: str = "Cost",
+        variable2_values: Optional[List[float]] = None,
+        formula: str = "profit",
+        output_sheet: Optional[str] = None
+    ) -> Dict:
+        """Create a 2D sensitivity / what-if table showing output across two variable ranges."""
+        from openpyxl.styles import Font as _F, PatternFill as _PF, Alignment as _A, Border as _B, Side as _S
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        def _auto_range(name):
+            hints = {
+                "revenue": [400_000, 500_000, 600_000, 700_000, 800_000],
+                "cost":    [150_000, 200_000, 250_000, 300_000, 350_000],
+                "price":   [50, 75, 100, 125, 150],
+                "units":   [1_000, 2_000, 3_000, 4_000, 5_000],
+                "rate":    [5, 10, 15, 20, 25],
+                "margin":  [20, 30, 40, 50, 60],
+                "growth":  [5, 10, 15, 20, 25],
+            }
+            for k, v in hints.items():
+                if k in name.lower(): return v
+            return [i * 100_000 for i in range(1, 6)]
+
+        v1 = [float(x) for x in (variable1_values or _auto_range(variable1_name))]
+        v2 = [float(x) for x in (variable2_values or _auto_range(variable2_name))]
+
+        _FORMULAS = {
+            "profit":      lambda a, b: a - b,
+            "margin":      lambda a, b: ((a - b) / a * 100) if a else 0,
+            "roi":         lambda a, b: ((a - b) / b * 100) if b else 0,
+            "revenue_net": lambda a, b: a * (1 - b / 100),
+            "break_even":  lambda a, b: a / b if b else 0,
+        }
+        _fmt_map = {
+            "profit": "#,##0", "margin": '0.00"%"', "roi": '0.00"%"',
+            "revenue_net": "#,##0", "break_even": "#,##0"
+        }
+        calc_fn = _FORMULAS.get(formula.lower(), lambda a, b: a - b)
+        num_fmt = _fmt_map.get(formula.lower(), "#,##0")
+
+        out_name = output_sheet or "Sensitivity"
+        if out_name in wb.sheetnames: del wb[out_name]
+        ws_o = wb.create_sheet(out_name)
+
+        ncols = len(v2) + 1
+        ws_o.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
+        t = ws_o.cell(row=1, column=1,
+                      value=f"What-If: {formula.title()} = f({variable1_name}, {variable2_name})")
+        t.font = _F(name="Calibri", bold=True, size=13, color="FFFFFF")
+        t.fill = _PF("solid", fgColor="1F3864")
+        t.alignment = _A(horizontal="center", vertical="center")
+        ws_o.row_dimensions[1].height = 28
+
+        ws_o.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncols)
+        sub = ws_o.cell(row=2, column=1, value=f"Rows: {variable1_name}   |   Columns: {variable2_name}")
+        sub.font = _F(name="Calibri", size=10, italic=True, color="555555")
+        sub.alignment = _A(horizontal="center")
+
+        corner = ws_o.cell(row=3, column=1, value=f"{variable1_name[:12]} \\ {variable2_name[:12]}")
+        corner.font = _F(name="Calibri", bold=True, size=9, color="FFFFFF")
+        corner.fill = _PF("solid", fgColor="2E75B6")
+        corner.alignment = _A(horizontal="center", vertical="center", wrap_text=True)
+        ws_o.row_dimensions[3].height = 30
+        for ci, cv in enumerate(v2, 2):
+            c = ws_o.cell(row=3, column=ci, value=cv)
+            c.font = _F(name="Calibri", bold=True, size=10, color="FFFFFF")
+            c.fill = _PF("solid", fgColor="2E75B6")
+            c.alignment = _A(horizontal="center", vertical="center")
+            c.number_format = "#,##0"
+
+        all_vals = [calc_fn(rv, cv) for rv in v1 for cv in v2]
+        v_min, v_max = min(all_vals), max(all_vals)
+
+        for ri, rv in enumerate(v1, 4):
+            rh = ws_o.cell(row=ri, column=1, value=rv)
+            rh.font = _F(name="Calibri", bold=True, size=10, color="FFFFFF")
+            rh.fill = _PF("solid", fgColor="2E75B6")
+            rh.alignment = _A(horizontal="right", vertical="center")
+            rh.number_format = "#,##0"
+            for ci, cv in enumerate(v2, 2):
+                result = calc_fn(rv, cv)
+                cell = ws_o.cell(row=ri, column=ci, value=round(result, 2))
+                cell.number_format = num_fmt
+                cell.alignment = _A(horizontal="right", vertical="center")
+                norm = (result - v_min) / (v_max - v_min) if v_max != v_min else 0.5
+                r_comp = int(255 * (1 - norm)); g_comp = int(200 * norm)
+                try:
+                    hex_bg = f"{min(255, r_comp + 160):02X}{min(255, g_comp + 200):02X}CC"
+                    cell.fill = _PF("solid", fgColor=hex_bg)
+                except Exception:
+                    cell.fill = _PF("solid", fgColor="E2EFDA")
+                is_best  = result == v_max
+                is_worst = result == v_min
+                cell.font = _F(name="Calibri", size=10, bold=is_best or is_worst,
+                               color="1E6B3C" if is_best else ("C00000" if is_worst else "1A1A2E"))
+                cell.border = _B(right=_S(style="hair"), bottom=_S(style="hair"))
+
+        ws_o.column_dimensions["A"].width = 18
+        for ci in range(2, len(v2) + 2):
+            ws_o.column_dimensions[get_column_letter(ci)].width = 14
+        ws_o.sheet_view.showGridLines = False
+
+        wb.save(filepath)
+        return {
+            "output_sheet": out_name, "formula": formula,
+            "variable1": {"name": variable1_name, "values": v1},
+            "variable2": {"name": variable2_name, "values": v2},
+            "best_case": round(v_max, 2), "worst_case": round(v_min, 2),
+            "message": (f"Sensitivity table '{formula}' written to '{out_name}'. "
+                        f"Best: {v_max:,.0f}, Worst: {v_min:,.0f}")
+        }
+
+    # ==================== BATCH 3: GROUPING / RUNNING TOTALS / CROSS-SHEET / FORMULA CF ====================
+
+    async def group_rows(
+        self, file_id: str, sheet_name: str,
+        start_row: int, end_row: int,
+        outline_level: int = 1, collapsed: bool = False
+    ) -> Dict:
+        """Group rows into a collapsible outline (Excel row grouping / drill-down)."""
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        ws = wb[sheet_name]
+
+        if start_row < 1 or end_row > ws.max_row or start_row > end_row:
+            raise ValueError(
+                f"Invalid row range {start_row}-{end_row}. Sheet has {ws.max_row} rows."
+            )
+        if not (1 <= outline_level <= 8):
+            raise ValueError("outline_level must be between 1 and 8")
+
+        for r in range(start_row, end_row + 1):
+            ws.row_dimensions[r].outlineLevel = outline_level
+            ws.row_dimensions[r].hidden = collapsed
+
+        # Summary row is below the group (Excel default)
+        ws.sheet_properties.outlinePr.summaryBelow = True
+        wb.save(filepath)
+        return {
+            "sheet": sheet_name, "start_row": start_row, "end_row": end_row,
+            "outline_level": outline_level, "collapsed": collapsed,
+            "rows_grouped": end_row - start_row + 1,
+            "message": (f"Grouped rows {start_row}-{end_row} at outline level {outline_level}"
+                        + (" (collapsed)" if collapsed else " (expanded)"))
+        }
+
+    async def add_running_totals(
+        self, file_id: str, sheet_name: str,
+        value_column: str, output_column: Optional[str] = None,
+        label: str = "Running Total", start_row: Optional[int] = None
+    ) -> Dict:
+        """Add a cumulative running-total column next to a numeric column."""
+        from openpyxl.styles import Font as _F, PatternFill as _PF, Alignment as _A
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        ws = wb[sheet_name]
+
+        # Resolve value column index
+        headers = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+        headers_str = [str(h) if h else f"Col{i+1}" for i, h in enumerate(headers)]
+
+        def _find(name):
+            return next((i + 1 for i, h in enumerate(headers_str)
+                         if h.lower().strip() == name.lower().strip()), None) or \
+                   next((i + 1 for i, h in enumerate(headers_str)
+                         if name.lower() in h.lower()), None)
+
+        vc_idx = _find(value_column)
+        if vc_idx is None:
+            raise ValueError(f"Column '{value_column}' not found. Available: {headers_str}")
+
+        # Place output column immediately after value column (or use named column)
+        if output_column:
+            oc_idx = _find(output_column)
+            if oc_idx is None:
+                # Create new column at end
+                oc_idx = ws.max_column + 1
+                ws.cell(row=1, column=oc_idx, value=label)
+                h = ws.cell(row=1, column=oc_idx)
+                h.font = _F(name="Calibri", bold=True, size=10, color="FFFFFF")
+                h.fill = _PF("solid", fgColor="2E75B6")
+                h.alignment = _A(horizontal="center", vertical="center")
+        else:
+            # Insert after value column
+            oc_idx = ws.max_column + 1
+            ws.cell(row=1, column=oc_idx, value=label)
+            h = ws.cell(row=1, column=oc_idx)
+            h.font = _F(name="Calibri", bold=True, size=10, color="FFFFFF")
+            h.fill = _PF("solid", fgColor="2E75B6")
+            h.alignment = _A(horizontal="center", vertical="center")
+
+        # Determine first data row
+        first_row = start_row if start_row and start_row > 1 else 2
+        running = 0.0
+        rows_written = 0
+        for r in range(first_row, ws.max_row + 1):
+            v = ws.cell(row=r, column=vc_idx).value
+            if isinstance(v, (int, float)):
+                running += float(v)
+                cell = ws.cell(row=r, column=oc_idx, value=round(running, 2))
+                cell.number_format = "#,##0.00"
+                cell.font = _F(name="Calibri", size=10)
+                cell.fill = _PF("solid", fgColor="EBF3FB")
+                rows_written += 1
+
+        wb.save(filepath)
+        col_letter = get_column_letter(oc_idx)
+        return {
+            "sheet": sheet_name, "value_column": value_column,
+            "output_column_letter": col_letter, "rows_written": rows_written,
+            "final_total": round(running, 2),
+            "message": (f"Running totals written to column {col_letter} "
+                        f"({rows_written} rows, final total: {running:,.2f})")
+        }
+
+    async def cross_sheet_formula(
+        self, file_id: str, target_sheet: str, target_cell: str,
+        source_sheet: str, source_range: str,
+        formula_type: str = "sum"
+    ) -> Dict:
+        """Write a formula in target_sheet that aggregates data from source_sheet."""
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        # Auto-create target sheet if needed
+        if target_sheet not in wb.sheetnames:
+            wb.create_sheet(target_sheet)
+        if source_sheet not in wb.sheetnames:
+            raise ValueError(f"Source sheet '{source_sheet}' not found. "
+                             f"Available: {wb.sheetnames}")
+
+        ws_t = wb[target_sheet]
+
+        # Quote sheet name if it contains spaces or special chars
+        import re as _re
+        safe_sheet = (f"'{source_sheet}'" if _re.search(r"[ !@#$%^&*()\[\]]", source_sheet)
+                      else source_sheet)
+        ref = f"{safe_sheet}!{source_range}"
+
+        ft = formula_type.lower().strip()
+        _FORMULA_MAP = {
+            "sum":     f"=SUM({ref})",
+            "average": f"=AVERAGE({ref})",
+            "avg":     f"=AVERAGE({ref})",
+            "count":   f"=COUNT({ref})",
+            "counta":  f"=COUNTA({ref})",
+            "min":     f"=MIN({ref})",
+            "max":     f"=MAX({ref})",
+            "link":    f"={ref}",          # direct cell reference (single cell only)
+            "stdev":   f"=STDEV({ref})",
+        }
+        formula = _FORMULA_MAP.get(ft)
+        if formula is None:
+            # Treat formula_type as a raw Excel function name
+            formula = f"={ft.upper()}({ref})"
+
+        ws_t[target_cell] = formula
+        wb.save(filepath)
+        return {
+            "target_sheet": target_sheet, "target_cell": target_cell,
+            "source_sheet": source_sheet, "source_range": source_range,
+            "formula": formula,
+            "message": (f"Formula '{formula}' written to {target_sheet}!{target_cell}")
+        }
+
+    async def formula_conditional_formatting(
+        self, file_id: str, sheet_name: str,
+        range_notation: str, formula: str,
+        fill_color: str = "FFFF00",
+        font_color: Optional[str] = None, bold: bool = False
+    ) -> Dict:
+        """Apply formula-based conditional formatting (e.g. highlight whole row when status='Done')."""
+        from openpyxl.formatting.rule import FormulaRule
+        from openpyxl.styles.differential import DifferentialStyle
+        from openpyxl.styles import PatternFill as _PF, Font as _F
+        from openpyxl.worksheet.cell_range import MultiCellRange as _MCR
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+        ws = wb[sheet_name]
+
+        # Normalize fill_color hex
+        _NAMED = {"red":"FF0000","green":"00B050","yellow":"FFFF00","orange":"FFA500",
+                  "blue":"0070C0","lightblue":"BDD7EE","pink":"FFC0CB","purple":"7030A0",
+                  "lightgreen":"E2EFDA","grey":"D9D9D9","gray":"D9D9D9","white":"FFFFFF"}
+        def _norm_color(c):
+            if not c: return c
+            c = c.strip().lstrip("#").upper()
+            return _NAMED.get(c.lower(), c)
+
+        fill_hex = _norm_color(fill_color)
+        font_hex = _norm_color(font_color) if font_color else None
+
+        if not fill_hex or len(fill_hex) != 6:
+            fill_hex = "FFFF00"
+
+        fill = _PF(patternType="solid", bgColor=fill_hex)
+        font_kwargs = {}
+        if font_hex: font_kwargs["color"] = font_hex
+        if bold:     font_kwargs["bold"] = True
+        dxf_font = _F(name="Calibri", **font_kwargs) if font_kwargs else None
+
+        dxf = DifferentialStyle(fill=fill, font=dxf_font)
+
+        # Ensure formula starts with = for clarity but FormulaRule needs it without =
+        formula_clean = formula.strip()
+        if formula_clean.startswith("="):
+            formula_clean = formula_clean[1:]
+
+        rule = FormulaRule(formula=[formula_clean], stopIfTrue=False)
+        rule.dxf = dxf
+        ws.conditional_formatting.add(str(range_notation).strip(), rule)
+        wb.save(filepath)
+        return {
+            "sheet": sheet_name, "range": range_notation,
+            "formula": formula, "fill_color": fill_hex, "bold": bold,
+            "message": (f"Formula conditional formatting applied to {range_notation}: "
+                        f"'{formula}' → fill #{fill_hex}")
+        }
+
     # ==================== HELPER METHODS ====================
 
     def _is_empty_cell_value(self, value: Any) -> bool:
@@ -4656,9 +5714,8 @@ class MCPService:
 
             if token.isdigit():
                 column_index = int(token)
-            elif token.isalpha():
-                column_index = column_index_from_string(token.upper())
             else:
+                # Always try header name match first (case-insensitive)
                 if header_row is None:
                     header_row = self._find_header_row(ws)
 
@@ -4670,7 +5727,14 @@ class MCPService:
                     if str(header_value).strip().lower() == target_header:
                         return col_idx
 
-                raise ValueError(f"Column '{column_ref}' not found")
+                # Fall back to Excel column letter (A, B, AB, etc.) only for short alpha tokens
+                if token.isalpha() and len(token) <= 3:
+                    try:
+                        column_index = column_index_from_string(token.upper())
+                    except Exception:
+                        raise ValueError(f"Column '{column_ref}' not found")
+                else:
+                    raise ValueError(f"Column '{column_ref}' not found")
 
         max_allowed = ws.max_column + (1 if allow_end else 0)
         if column_index < 1 or column_index > max_allowed:
@@ -4784,6 +5848,984 @@ class MCPService:
         # Unknown expected type: treat as valid to avoid false negatives.
         return True
 
+    async def format_financial_sheet(
+        self,
+        file_id: str,
+        sheet_name: str,
+        title: Optional[str] = None,
+        subtitle: Optional[str] = None,
+    ) -> Dict:
+        """Tool 75: Apply professional financial report styling to any sheet.
+
+        Reads existing label/value rows, classifies each row by keyword
+        (section header, subtotal, net total, or plain data), adjusts
+        formula cell references for the inserted title rows, then rebuilds
+        the sheet with navy/blue/green theme — no hardcoded numbers.
+        """
+        import re
+        from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)  # data_only=False keeps formula strings
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found in workbook")
+
+        ws_old = wb[sheet_name]
+
+        # ── 1. Read existing rows (col A = label, col B = value) ─────────────
+        rows_data: List[tuple] = []
+        for row_cells in ws_old.iter_rows():
+            label_val = row_cells[0].value if row_cells else None
+            value_val = row_cells[1].value if len(row_cells) > 1 else None
+            if label_val is not None:
+                label_str = str(label_val).strip().lstrip(" -=")
+                if label_str:
+                    orig_row = row_cells[0].row
+                    rows_data.append((orig_row, label_str, value_val))
+
+        if not rows_data:
+            return {"message": f"Sheet '{sheet_name}' is empty — nothing to format"}
+
+        # ── 2. Auto-detect title from sheet name ──────────────────────────────
+        if not title:
+            sn = sheet_name.lower().replace(" ", "").replace("_", "")
+            if any(k in sn for k in ["pnl", "p&l", "profit", "loss", "income"]):
+                title = "PROFIT & LOSS STATEMENT"
+            elif any(k in sn for k in ["cash", "cashflow", "cf"]):
+                title = "CASH FLOW STATEMENT"
+            elif "balance" in sn:
+                title = "BALANCE SHEET"
+            else:
+                title = sheet_name.upper()
+        if not subtitle:
+            subtitle = f"Financial Year {datetime.now().year}"
+
+        # ── 3. Row classification keywords ───────────────────────────────────
+        SECTION_KW = [
+            "revenue", "sales", "income from",
+            "cost of goods", "cogs", "cost of sales", "cost of revenue",
+            "operating expenses", "opex", "operating costs",
+            "below-line", "below line", "other items", "non-operating",
+            "operating activities", "cash from operations",
+            "investing activities", "capital expenditure", "capex",
+            "financing activities",
+        ]
+        SUBTOTAL_KW = [
+            "gross revenue", "total revenue",
+            "gross profit", "gross margin",
+            "ebitda", "ebit", "ebt",
+            "earnings before",
+            "total operating cash", "total operating",
+            "total investing cash", "total investing",
+            "total financing cash", "total financing",
+            "subtotal", "total expenses",
+            # balance sheet
+            "total current assets", "total non-current", "total fixed",
+            "total current liabilities", "total liabilities",
+            "total equity", "shareholders equity",
+        ]
+        STRONG_KW = [
+            "net income", "net profit", "net earnings", "net loss",
+            "net cash flow", "net cash", "ending cash", "free cash flow",
+            "bottom line",
+            # balance sheet
+            "total assets",
+            "total liabilities & equity", "total liabilities and equity",
+        ]
+
+        def classify(label: str, has_value: bool = True) -> str:
+            """Classify a row by its label text.
+
+            Section headers (pure heading rows) are only recognised when the
+            row carries no value — if there IS a value the row is data/subtotal.
+            """
+            ll = label.lower().lstrip(" -=")
+            for kw in STRONG_KW:
+                if kw in ll:
+                    return "strong"
+            for kw in SUBTOTAL_KW:
+                if kw in ll:
+                    return "subtotal"
+            if not has_value:
+                for kw in SECTION_KW:
+                    if kw in ll:
+                        return "section"
+            return "data"
+
+        # ── 4. Build old→new row map (title block = 3 rows prepended) ─────────
+        HEADER_ROWS = 3
+        row_map: Dict[int, int] = {}
+        new_r = HEADER_ROWS + 1
+        for orig_r, label, val in rows_data:
+            row_map[orig_r] = new_r
+            kind = classify(label, has_value=(val is not None))
+            new_r += 1
+            if kind in ("subtotal", "strong"):
+                new_r += 1  # blank spacer row after each total/subtotal
+
+        def adjust_formula(val) -> Any:
+            """Shift row numbers inside formula strings to match new positions."""
+            if not isinstance(val, str) or not val.startswith("="):
+                return val
+            def _shift(m):
+                letters = m.group(1)
+                old_row = int(m.group(2))
+                new_row = row_map.get(old_row, old_row + HEADER_ROWS)
+                return f"{letters}{new_row}"
+            return re.sub(r'([A-Z]+)(\d+)', _shift, val)
+
+        # ── 5. Colour palette & style helpers ─────────────────────────────────
+        C_NAVY    = "1F3864"
+        C_BLUE    = "2E75B6"
+        C_LBLUE   = "D6E4F0"
+        C_GREEN   = "1E6B3C"
+        C_LGREENB = "E2EFDA"
+        C_GREY    = "F2F2F2"
+        C_WHITE   = "FFFFFF"
+        C_DARK    = "1A1A2E"
+        CURR_FMT  = '#,##0.00_);[Red](#,##0.00)'
+
+        def _fill(h):
+            return PatternFill("solid", fgColor=h)
+
+        def _thin():
+            s = Side(style="thin")
+            return Border(left=s, right=s, top=s, bottom=s)
+
+        def _thick_bot():
+            s = Side(style="thin"); m = Side(style="medium")
+            return Border(left=s, right=s, top=s, bottom=m)
+
+        # ── 6. Rebuild sheet ──────────────────────────────────────────────────
+        del wb[sheet_name]
+        ws = wb.create_sheet(sheet_name)
+
+        # Title row
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3)
+        c = ws.cell(row=1, column=1, value=title)
+        c.fill = _fill(C_NAVY)
+        c.font = Font(name="Calibri", bold=True, size=16, color="FFFFFF")
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = _thin()
+        for col in (2, 3):
+            ws.cell(row=1, column=col).fill = _fill(C_NAVY)
+        ws.row_dimensions[1].height = 30
+
+        # Subtitle row
+        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=3)
+        c = ws.cell(row=2, column=1, value=subtitle)
+        c.fill = _fill(C_NAVY)
+        c.font = Font(name="Calibri", bold=False, size=11, color="BDD7EE")
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = _thin()
+        for col in (2, 3):
+            ws.cell(row=2, column=col).fill = _fill(C_NAVY)
+        ws.row_dimensions[2].height = 18
+
+        # Spacer row 3
+        for col in range(1, 4):
+            ws.cell(row=3, column=col).fill = _fill(C_WHITE)
+        ws.row_dimensions[3].height = 6
+
+        # Data rows
+        alt = False
+        for orig_r, label, raw_value in rows_data:
+            r = row_map[orig_r]
+            kind = classify(label, has_value=(raw_value is not None))
+            adj_val = adjust_formula(raw_value)
+            is_numeric = not isinstance(adj_val, str)
+            is_pct = isinstance(raw_value, str) and "%" in raw_value
+
+            if kind == "section":
+                ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=3)
+                c = ws.cell(row=r, column=1, value=f"  {label.upper()}")
+                c.fill = _fill(C_BLUE)
+                c.font = Font(name="Calibri", bold=True, size=10, color="FFFFFF")
+                c.alignment = Alignment(horizontal="left", vertical="center")
+                c.border = _thin()
+                for col in (2, 3):
+                    ws.cell(row=r, column=col).fill = _fill(C_BLUE)
+                ws.row_dimensions[r].height = 20
+                alt = False
+
+            elif kind == "strong":
+                for col, val, is_v in [(1, label.upper(), False), (2, adj_val, True), (3, None, False)]:
+                    c = ws.cell(row=r, column=col)
+                    if val is not None:
+                        c.value = val
+                    c.fill = _fill(C_LGREENB)
+                    c.font = Font(name="Calibri", bold=True, size=11, color=C_GREEN)
+                    c.alignment = Alignment(horizontal="right" if is_v else "left", vertical="center")
+                    if is_v and is_numeric and not is_pct:
+                        c.number_format = CURR_FMT
+                    c.border = _thick_bot()
+                ws.row_dimensions[r].height = 26
+                for col in range(1, 4):
+                    ws.cell(row=r + 1, column=col).fill = _fill(C_WHITE)
+                ws.row_dimensions[r + 1].height = 6
+
+            elif kind == "subtotal":
+                for col, val, is_v in [(1, label, False), (2, adj_val, True), (3, None, False)]:
+                    c = ws.cell(row=r, column=col)
+                    if val is not None:
+                        c.value = val
+                    c.fill = _fill(C_LBLUE)
+                    c.font = Font(name="Calibri", bold=True, size=10, color=C_DARK)
+                    c.alignment = Alignment(horizontal="right" if is_v else "left", vertical="center")
+                    if is_v and is_numeric and not is_pct:
+                        c.number_format = CURR_FMT
+                    c.border = _thick_bot()
+                ws.row_dimensions[r].height = 22
+                for col in range(1, 4):
+                    ws.cell(row=r + 1, column=col).fill = _fill(C_WHITE)
+                ws.row_dimensions[r + 1].height = 6
+
+            else:  # plain data row
+                bg = C_GREY if alt else C_WHITE
+                for col, val, is_v in [(1, f"  {label}", False), (2, adj_val, True), (3, None, False)]:
+                    c = ws.cell(row=r, column=col)
+                    if val is not None:
+                        c.value = val
+                    c.fill = _fill(bg)
+                    c.font = Font(name="Calibri", bold=False, size=10, color="000000")
+                    c.alignment = Alignment(
+                        horizontal="right" if is_v else "left",
+                        vertical="center",
+                        indent=1 if col == 1 else 0,
+                    )
+                    if is_v and is_numeric and not is_pct:
+                        c.number_format = CURR_FMT
+                    c.border = _thin()
+                ws.row_dimensions[r].height = 18
+                alt = not alt
+
+        ws.column_dimensions["A"].width = 38
+        ws.column_dimensions["B"].width = 18
+        ws.column_dimensions["C"].width = 4
+        ws.sheet_view.showGridLines = False
+
+        wb.save(filepath)
+        return {
+            "message": f"Sheet '{sheet_name}' styled as a professional financial report",
+            "title": title,
+            "subtitle": subtitle,
+            "rows_formatted": len(rows_data),
+        }
+
+    # ════════════════════════════════════════════════════════════════════════
+    # PROFESSIONAL DOCUMENT GENERATORS  (private helpers)
+    # ════════════════════════════════════════════════════════════════════════
+
+    def _make_pnl_rows(self, p: Dict) -> List[List]:
+        import random
+        rev    = int(p.get("revenue", round(random.uniform(400, 2000)) * 1000))
+        cogs   = int(p.get("cogs", p.get("cost_of_goods",
+                    round(rev * random.uniform(0.36, 0.52) / 1000) * 1000)))
+        opex   = int(p.get("opex", p.get("operating_expenses",
+                    round(rev * random.uniform(0.28, 0.42) / 1000) * 1000)))
+        dep    = int(p.get("depreciation",
+                    round(rev * random.uniform(0.015, 0.028) / 1000) * 1000))
+        interest = int(p.get("interest",
+                    round(rev * random.uniform(0.005, 0.015) / 1000) * 1000))
+        tax_rate = float(p.get("tax_rate", 0.30))
+        return [
+            ["Revenue",              rev],
+            ["Cost of Goods Sold",   cogs],
+            ["Gross Profit",         "=B1-B2"],
+            ["Operating Expenses",   opex],
+            ["EBITDA",               "=B3-B4"],
+            ["Depreciation",         dep],
+            ["EBIT",                 "=B5-B6"],
+            ["Interest Expense",     interest],
+            ["EBT",                  "=B7-B8"],
+            ["Tax",                  f"=ROUND(B9*{tax_rate},0)"],
+            ["Net Income",           "=B9-B10"],
+        ]
+
+    def _make_cashflow_rows(self, p: Dict) -> List[List]:
+        import random
+        net_inc   = int(p.get("net_income",   round(random.uniform(30,  300)) * 1000))
+        dep       = int(p.get("depreciation", round(random.uniform(10,   80)) * 1000))
+        wc        = int(p.get("working_capital_change",
+                              round(random.uniform(-50, 50)) * 1000))
+        capex     = -abs(int(p.get("capex", p.get("capital_expenditures",
+                              round(random.uniform(20, 150)) * 1000))))
+        debt_chg  = int(p.get("debt_change",  round(random.uniform(-50,  50)) * 1000))
+        dividends = -abs(int(p.get("dividends", round(random.uniform(0,   40)) * 1000)))
+        return [
+            ["Net Income",                  net_inc],
+            ["Add: Depreciation",           dep],
+            ["Changes in Working Capital",  wc],
+            ["Total Operating Cash Flow",   "=B1+B2+B3"],
+            ["Capital Expenditures",        capex],
+            ["Total Investing Cash Flow",   "=B5"],
+            ["Debt Financing",              debt_chg],
+            ["Dividends Paid",              dividends],
+            ["Total Financing Cash Flow",   "=B7+B8"],
+            ["Net Cash Flow",               "=B4+B6+B9"],
+        ]
+
+    def _make_balance_sheet_rows(self, p: Dict) -> List[List]:
+        import random
+        cash   = int(p.get("cash",        round(random.uniform(50,  400)) * 1000))
+        ar     = int(p.get("receivables", round(random.uniform(30,  250)) * 1000))
+        inv    = int(p.get("inventory",   round(random.uniform(40,  300)) * 1000))
+        ppe    = int(p.get("ppe",         round(random.uniform(100, 800)) * 1000))
+        ap     = int(p.get("payables",    round(random.uniform(20,  150)) * 1000))
+        st_dbt = int(p.get("short_term_debt", round(random.uniform(20, 100)) * 1000))
+        lt_dbt = int(p.get("long_term_debt",  round(random.uniform(50, 400)) * 1000))
+        stock  = int(p.get("stock",       round(random.uniform(50,  200)) * 1000))
+        total_ca = cash + ar + inv
+        total_a  = total_ca + ppe
+        total_cl = ap + st_dbt
+        total_l  = total_cl + lt_dbt
+        retained = total_a - total_l - stock   # balancing figure
+        total_eq = stock + retained
+        return [
+            ["ASSETS",                      None],
+            ["Cash & Equivalents",          cash],
+            ["Accounts Receivable",         ar],
+            ["Inventory",                   inv],
+            ["Total Current Assets",        total_ca],
+            ["Property & Equipment (net)",  ppe],
+            ["Total Assets",                total_a],
+            ["LIABILITIES",                 None],
+            ["Accounts Payable",            ap],
+            ["Short-term Debt",             st_dbt],
+            ["Total Current Liabilities",   total_cl],
+            ["Long-term Debt",              lt_dbt],
+            ["Total Liabilities",           total_l],
+            ["EQUITY",                      None],
+            ["Common Stock",                stock],
+            ["Retained Earnings",           retained],
+            ["Total Equity",                total_eq],
+            ["Total Liabilities & Equity",  total_l + total_eq],
+        ]
+
+    def _apply_table_style(
+        self, ws, title: str, subtitle: str,
+        headers: List[str], data_rows: List[List],
+        col_fmts: Dict = None, total_row_indices: set = None,
+        col_widths: List[float] = None,
+    ) -> None:
+        from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+
+        col_fmts         = col_fmts or {}
+        total_row_indices = total_row_indices or set()
+        n = len(headers)
+
+        C_NAVY  = "1F3864"; C_BLUE  = "2E75B6"; C_LBLUE = "D6E4F0"
+        C_GREY  = "F2F2F2"; C_WHITE = "FFFFFF"; C_DARK  = "1A1A2E"
+        CURR    = '#,##0.00_);[Red](#,##0.00)'
+
+        def _f(h):   return PatternFill("solid", fgColor=h)
+        def _thin():
+            s = Side(style="thin"); return Border(left=s,right=s,top=s,bottom=s)
+        def _thick():
+            s = Side(style="thin"); m = Side(style="medium")
+            return Border(left=s,right=s,top=s,bottom=m)
+
+        # Row 1: title
+        ws.merge_cells(start_row=1,start_column=1,end_row=1,end_column=n)
+        c = ws.cell(row=1,column=1,value=title)
+        c.fill=_f(C_NAVY); c.font=Font(name="Calibri",bold=True,size=16,color="FFFFFF")
+        c.alignment=Alignment(horizontal="center",vertical="center"); c.border=_thin()
+        for col in range(2,n+1): ws.cell(row=1,column=col).fill=_f(C_NAVY)
+        ws.row_dimensions[1].height=30
+
+        # Row 2: subtitle
+        ws.merge_cells(start_row=2,start_column=1,end_row=2,end_column=n)
+        c = ws.cell(row=2,column=1,value=subtitle)
+        c.fill=_f(C_NAVY); c.font=Font(name="Calibri",bold=False,size=11,color="BDD7EE")
+        c.alignment=Alignment(horizontal="center",vertical="center"); c.border=_thin()
+        for col in range(2,n+1): ws.cell(row=2,column=col).fill=_f(C_NAVY)
+        ws.row_dimensions[2].height=18
+
+        # Row 3: spacer
+        for col in range(1,n+1): ws.cell(row=3,column=col).fill=_f(C_WHITE)
+        ws.row_dimensions[3].height=6
+
+        # Row 4: column headers
+        for ci,h in enumerate(headers,1):
+            c = ws.cell(row=4,column=ci,value=h)
+            c.fill=_f(C_BLUE); c.font=Font(name="Calibri",bold=True,size=10,color="FFFFFF")
+            c.alignment=Alignment(horizontal="center",vertical="center"); c.border=_thin()
+        ws.row_dimensions[4].height=22
+
+        # Data rows (row 5+)
+        for ri,row_data in enumerate(data_rows):
+            r = ri+5
+            is_total = ri in total_row_indices
+            bg = C_LBLUE if is_total else (C_GREY if ri%2==0 else C_WHITE)
+            for ci,val in enumerate(row_data,1):
+                c = ws.cell(row=r,column=ci,value=val)
+                c.fill=_f(bg)
+                c.font=Font(name="Calibri",bold=is_total,size=10,
+                            color=C_DARK if is_total else "000000")
+                c.alignment=Alignment(
+                    horizontal="right" if ci>1 else "left",
+                    vertical="center")
+                fmt = col_fmts.get(ci-1)
+                if fmt and isinstance(val,(int,float)):
+                    c.number_format = CURR if fmt=="currency" else fmt
+                c.border = _thick() if is_total else _thin()
+            ws.row_dimensions[r].height=18
+
+        # Column widths
+        widths = col_widths or [16]*n
+        for ci,w in enumerate(widths,1):
+            ws.column_dimensions[get_column_letter(ci)].width=w
+
+    async def _create_tabular_document(self, file_id: str, sheet_name: str, doc_type: str, p: Dict) -> None:
+        import random
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+        if sheet_name not in wb.sheetnames:
+            wb.create_sheet(sheet_name)
+        ws = wb[sheet_name]
+        for row in ws.iter_rows(): [setattr(c,"value",None) for c in row]
+
+        period = p.get("period", p.get("subtitle", f"Financial Year {datetime.now().year}"))
+
+        if doc_type in ("budget","budget_actuals"):
+            title = p.get("title","BUDGET VS ACTUALS")
+            cats = p.get("categories",[
+                {"name":"Sales & Marketing",     "budget":85000},
+                {"name":"R&D",                   "budget":120000},
+                {"name":"Operations",            "budget":95000},
+                {"name":"Human Resources",       "budget":60000},
+                {"name":"IT & Infrastructure",   "budget":45000},
+                {"name":"General & Admin",       "budget":35000},
+            ])
+            headers=["Category","Budget","Actual","Variance","Var %"]
+            data_rows=[]; tb=0; ta=0
+            for cat in cats:
+                b=int(cat.get("budget",round(random.uniform(30,150))*1000))
+                a=int(cat.get("actual",round(b*random.uniform(0.80,1.20)/1000)*1000))
+                v=a-b; vp=round(v/b*100,1) if b else 0
+                data_rows.append([cat["name"],b,a,v,f"{vp}%"]); tb+=b; ta+=a
+            tv=ta-tb; tp=round(tv/tb*100,1) if tb else 0
+            data_rows.append(["TOTAL",tb,ta,tv,f"{tp}%"])
+            col_fmts={1:"currency",2:"currency",3:"currency"}
+            col_widths=[28,14,14,14,10]; total_rows={len(data_rows)-1}
+
+        elif doc_type in ("sales","sales_report"):
+            title = p.get("title","SALES REPORT")
+            headers=["Month","Units Sold","Unit Price","Revenue","MoM Growth"]
+            data_rows=[]; prev=None
+            pre_rows = p.get("rows")   # from _extract_params_from_sheet
+            if pre_rows:
+                # Use pre-extracted row data
+                for entry in pre_rows:
+                    m = entry.get("month","")
+                    units = entry.get("units", round(random.uniform(200,1500)))
+                    price = entry.get("price", round(random.uniform(50,500),2))
+                    rev   = entry.get("revenue") or round(units * price)
+                    growth = f"{round((rev-prev)/prev*100,1)}%" if prev else "—"
+                    data_rows.append([m, int(units), float(price), int(rev), growth]); prev=rev
+            else:
+                months=p.get("months",["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"])
+                for m in months:
+                    units=int(p.get("units",round(random.uniform(200,1500))))
+                    price=round(random.uniform(50,500),2); rev=round(units*price)
+                    growth=f"{round((rev-prev)/prev*100,1)}%" if prev else "—"
+                    data_rows.append([m,units,price,rev,growth]); prev=rev
+            tot_u=sum(r[1] for r in data_rows); tot_r=sum(r[3] for r in data_rows)
+            data_rows.append(["TOTAL",tot_u,"",tot_r,""])
+            col_fmts={2:"currency",3:"currency"}; col_widths=[12,12,12,14,12]
+            total_rows={len(data_rows)-1}
+
+        elif doc_type=="payroll":
+            title = p.get("title","PAYROLL REGISTER")
+            period = p.get("period",f"Pay Period: {datetime.now().strftime('%B %Y')}")
+            emps=p.get("employees",[
+                {"name":"Alice Johnson",  "dept":"Engineering", "salary":95000},
+                {"name":"Bob Smith",      "dept":"Marketing",   "salary":72000},
+                {"name":"Carol Davis",    "dept":"Finance",     "salary":85000},
+                {"name":"David Lee",      "dept":"Engineering", "salary":105000},
+                {"name":"Eva Martinez",   "dept":"HR",          "salary":68000},
+                {"name":"Frank Wilson",   "dept":"Operations",  "salary":78000},
+            ])
+            headers=["Employee","Department","Base Salary","Bonus","Gross Pay","Tax (30%)","Net Pay"]
+            data_rows=[]
+            for e in emps:
+                base=int(e.get("salary",round(random.uniform(50,120))*1000))
+                bonus=int(e.get("bonus",round(base*random.uniform(0,0.15)/1000)*1000))
+                gross=base+bonus; tax=round(gross*0.30); net=gross-tax
+                data_rows.append([e["name"],e.get("dept",""),base,bonus,gross,tax,net])
+            t=["TOTAL","",*[sum(r[i] for r in data_rows) for i in range(2,7)]]
+            data_rows.append(t)
+            col_fmts={2:"currency",3:"currency",4:"currency",5:"currency",6:"currency"}
+            col_widths=[22,16,14,12,14,14,14]; total_rows={len(data_rows)-1}
+
+        elif doc_type in ("kpi","kpi_dashboard"):
+            title = p.get("title","KPI DASHBOARD")
+            period = p.get("period",f"As of {datetime.now().strftime('%B %Y')}")
+            metrics=p.get("metrics",[
+                {"name":"Revenue Growth",        "target":"15%",  "actual":f"{round(random.uniform(8,22),1)}%"},
+                {"name":"Gross Margin",          "target":"60%",  "actual":f"{round(random.uniform(52,65),1)}%"},
+                {"name":"New Customers",         "target":"500",  "actual":str(round(random.uniform(350,620)))},
+                {"name":"Churn Rate",            "target":"<5%",  "actual":f"{round(random.uniform(2,8),1)}%"},
+                {"name":"NPS Score",             "target":"50",   "actual":str(round(random.uniform(35,70)))},
+                {"name":"Employee Satisfaction", "target":"4.0",  "actual":str(round(random.uniform(3.2,4.8),1))},
+                {"name":"Operating Cash Flow",   "target":"$500K","actual":f"${round(random.uniform(300,700))}K"},
+                {"name":"EBITDA Margin",         "target":"20%",  "actual":f"{round(random.uniform(12,28),1)}%"},
+            ])
+            headers=["KPI Metric","Target","Actual","Variance","Status"]
+            data_rows=[]
+            for m in metrics:
+                tgt=str(m.get("target","—")); act=str(m.get("actual","—"))
+                try:
+                    t=float(tgt.replace("%","").replace("$","").replace("K","").replace("<","").strip())
+                    a=float(act.replace("%","").replace("$","").replace("K","").strip())
+                    var=round(a-t,1); status="✓ On Track" if a>=t else "✗ Below Target"
+                except (ValueError,AttributeError):
+                    var="—"; status="—"
+                data_rows.append([m["name"],tgt,act,str(var),status])
+            col_fmts={}; col_widths=[28,14,14,12,16]; total_rows=set()
+
+        elif doc_type == "invoice":
+            from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+            title_str = p.get("title","INVOICE")
+            company = p.get("company","Your Company Name")
+            client  = p.get("client","Client Name")
+            inv_num = p.get("invoice_num", f"INV-{datetime.now().strftime('%Y%m%d')}")
+            inv_date = p.get("date", datetime.now().strftime("%d %b %Y"))
+            due_date = p.get("due_date","Net 30")
+            tax_rate = float(p.get("tax_rate", 0.10))
+            items = p.get("items",[
+                {"desc":"Professional Services","qty":40,"price":150},
+                {"desc":"Project Management",   "qty":10,"price":120},
+                {"desc":"Documentation",        "qty":5, "price":80},
+            ])
+            C_NAVY="1F3864"; C_BLUE="2E75B6"; C_LBLUE="D6E4F0"
+            C_GREY="F2F2F2"; C_WHITE="FFFFFF"
+            CURR='#,##0.00_);[Red](#,##0.00)'
+            def _f(h): return PatternFill("solid",fgColor=h)
+            def _thin():
+                s=Side(style="thin"); return Border(left=s,right=s,top=s,bottom=s)
+            def _thick():
+                s=Side(style="thin"); m=Side(style="medium")
+                return Border(left=s,right=s,top=s,bottom=m)
+            # Header block
+            ws.merge_cells("A1:E1")
+            c=ws.cell(row=1,column=1,value=company)
+            c.fill=_f(C_NAVY); c.font=Font(name="Calibri",bold=True,size=18,color="FFFFFF")
+            c.alignment=Alignment(horizontal="left",vertical="center",indent=1); c.border=_thin()
+            for col in range(2,6): ws.cell(row=1,column=col).fill=_f(C_NAVY)
+            ws.row_dimensions[1].height=36
+            ws.merge_cells("A2:E2")
+            c=ws.cell(row=2,column=1,value=title_str)
+            c.fill=_f(C_BLUE); c.font=Font(name="Calibri",bold=True,size=14,color="FFFFFF")
+            c.alignment=Alignment(horizontal="left",vertical="center",indent=1); c.border=_thin()
+            for col in range(2,6): ws.cell(row=2,column=col).fill=_f(C_BLUE)
+            ws.row_dimensions[2].height=26
+            # Meta
+            for i,(lbl,val) in enumerate([
+                ("Invoice #:",inv_num),("Date:",inv_date),("Due Date:",due_date),("Bill To:",client)
+            ],3):
+                c=ws.cell(row=i,column=1,value=lbl)
+                c.font=Font(name="Calibri",bold=True,size=10); c.border=_thin()
+                c.fill=_f(C_GREY if i%2==0 else C_WHITE)
+                c2=ws.cell(row=i,column=2,value=val)
+                ws.merge_cells(start_row=i,start_column=2,end_row=i,end_column=5)
+                c2.font=Font(name="Calibri",size=10); c2.border=_thin()
+                c2.fill=_f(C_GREY if i%2==0 else C_WHITE)
+            # Spacer
+            ws.row_dimensions[7].height=8
+            # Line items header
+            hdrs=["Description","Quantity","Unit Price","Amount",""]
+            for ci,h in enumerate(hdrs,1):
+                c=ws.cell(row=8,column=ci,value=h)
+                c.fill=_f(C_BLUE); c.font=Font(name="Calibri",bold=True,size=10,color="FFFFFF")
+                c.alignment=Alignment(horizontal="center",vertical="center"); c.border=_thin()
+            ws.row_dimensions[8].height=22
+            # Items
+            subtotal=0
+            for ri,item in enumerate(items,9):
+                qty=item.get("qty",1); price=item.get("price",0); amt=qty*price; subtotal+=amt
+                bg=C_GREY if ri%2==0 else C_WHITE
+                vals=[item.get("desc",""),qty,price,amt,""]
+                for ci,v in enumerate(vals,1):
+                    c=ws.cell(row=ri,column=ci,value=v)
+                    c.fill=_f(bg); c.font=Font(name="Calibri",size=10); c.border=_thin()
+                    if ci in (3,4): c.number_format=CURR
+                    c.alignment=Alignment(horizontal="right" if ci>1 else "left",vertical="center")
+                ws.row_dimensions[ri].height=18
+            end_row=9+len(items)
+            # Totals
+            tax_amt=round(subtotal*tax_rate,2); total=subtotal+tax_amt
+            for lbl,val,is_total in [("Subtotal",subtotal,False),
+                                      (f"Tax ({int(tax_rate*100)}%)",tax_amt,False),
+                                      ("TOTAL DUE",total,True)]:
+                c1=ws.cell(row=end_row,column=3,value=lbl)
+                c2=ws.cell(row=end_row,column=4,value=val)
+                c2.number_format=CURR
+                bg=C_LBLUE if is_total else C_WHITE
+                for ci in (3,4):
+                    cell=ws.cell(row=end_row,column=ci)
+                    cell.fill=_f(bg)
+                    cell.font=Font(name="Calibri",bold=is_total,size=10 if not is_total else 11,
+                                   color="1E6B3C" if is_total else "000000")
+                    cell.border=_thick() if is_total else _thin()
+                    cell.alignment=Alignment(horizontal="right",vertical="center")
+                ws.row_dimensions[end_row].height=20
+                end_row+=1
+            col_ws=[30,12,14,14,4]
+            for ci,w in enumerate(col_ws,1): ws.column_dimensions[get_column_letter(ci)].width=w
+            ws.sheet_view.showGridLines=False
+            wb.save(filepath)
+            return  # Invoice has its own layout, skip _apply_table_style
+
+        elif doc_type == "inventory":
+            title = p.get("title","INVENTORY TRACKER")
+            items = p.get("items",[
+                {"name":"Laptop Pro X1",   "sku":"LP-001","category":"Electronics","stock":45,"min_stock":10,"unit_cost":1200},
+                {"name":"Wireless Mouse",  "sku":"WM-042","category":"Electronics","stock":8, "min_stock":20,"unit_cost":35},
+                {"name":"Office Chair",    "sku":"OC-011","category":"Furniture",  "stock":22,"min_stock":5, "unit_cost":280},
+                {"name":"A4 Paper (Ream)", "sku":"PA-200","category":"Stationery", "stock":3, "min_stock":50,"unit_cost":8},
+                {"name":"Printer Ink Set", "sku":"PI-303","category":"Stationery", "stock":15,"min_stock":10,"unit_cost":65},
+                {"name":"Standing Desk",   "sku":"SD-007","category":"Furniture",  "stock":6, "min_stock":3, "unit_cost":650},
+                {"name":"USB-C Hub",       "sku":"UH-099","category":"Electronics","stock":30,"min_stock":15,"unit_cost":49},
+                {"name":"Notebook (Pack)", "sku":"NB-112","category":"Stationery", "stock":2, "min_stock":30,"unit_cost":12},
+            ])
+            headers=["Item Name","SKU","Category","In Stock","Min Stock","Unit Cost","Total Value","Status"]
+            data_rows=[]; total_val=0
+            for it in items:
+                stk=it.get("stock",0); mn=it.get("min_stock",0)
+                cost=it.get("unit_cost",0); tv=stk*cost; total_val+=tv
+                pct=stk/mn if mn else 1
+                status="✓ OK" if pct>=1 else ("⚠ Low" if pct>=0.3 else "✗ Critical")
+                data_rows.append([it.get("name",""),it.get("sku",""),it.get("category",""),
+                                  stk,mn,cost,tv,status])
+            data_rows.append(["TOTAL","","","","","",total_val,""])
+            col_fmts={5:"currency",6:"currency"}; col_widths=[26,12,14,10,10,12,14,12]
+            total_rows={len(data_rows)-1}
+
+        elif doc_type == "attendance":
+            title = p.get("title","ATTENDANCE TRACKER")
+            month_label = p.get("month", datetime.now().strftime("%B %Y"))
+            period = month_label
+            employees = p.get("employees",[
+                {"name":"Alice Johnson","dept":"Engineering"},
+                {"name":"Bob Smith",    "dept":"Marketing"},
+                {"name":"Carol Davis",  "dept":"Finance"},
+                {"name":"David Lee",    "dept":"Engineering"},
+                {"name":"Eva Martinez", "dept":"HR"},
+                {"name":"Frank Wilson", "dept":"Operations"},
+            ])
+            days=["Mon","Tue","Wed","Thu","Fri","Mon","Tue","Wed","Thu","Fri",
+                  "Mon","Tue","Wed","Thu","Fri","Mon","Tue","Wed","Thu","Fri"]
+            headers=["Employee","Department"]+days+["Present","Absent","Leave"]
+            data_rows=[]
+            for emp in employees:
+                row_vals=[emp["name"],emp.get("dept","")]
+                present=0; absent=0; leave=0
+                for d in days:
+                    r=random.choice(["P","P","P","P","A","L"])
+                    row_vals.append(r)
+                    if r=="P": present+=1
+                    elif r=="A": absent+=1
+                    else: leave+=1
+                row_vals+=[present,absent,leave]
+                data_rows.append(row_vals)
+            col_fmts={}; total_rows=set()
+            col_widths=[20,14]+[4]*20+[8,8,8]
+
+        elif doc_type in ("pipeline","sales_pipeline"):
+            title = p.get("title","SALES PIPELINE")
+            deals = p.get("deals",[
+                {"deal":"Enterprise CRM Deal",    "company":"TechCorp Inc",    "stage":"Negotiation","value":120000,"prob":70,"close":"2025-06-30","owner":"Alice"},
+                {"deal":"Cloud Migration Project","company":"FinServ Ltd",     "stage":"Proposal",   "value":85000, "prob":50,"close":"2025-07-15","owner":"Bob"},
+                {"deal":"Security Audit Contract","company":"RetailMax Co",    "stage":"Qualified",  "value":45000, "prob":35,"close":"2025-08-01","owner":"Carol"},
+                {"deal":"Data Analytics Platform","company":"HealthPlus",      "stage":"Negotiation","value":200000,"prob":80,"close":"2025-05-31","owner":"Alice"},
+                {"deal":"ERP Implementation",     "company":"ManufacturePro",  "stage":"Proposal",   "value":350000,"prob":45,"close":"2025-09-15","owner":"David"},
+                {"deal":"SaaS Subscription",      "company":"StartupXYZ",      "stage":"Prospect",   "value":24000, "prob":20,"close":"2025-10-01","owner":"Eva"},
+                {"deal":"IT Support Contract",    "company":"LegalAssociates", "stage":"Closed Won", "value":36000, "prob":100,"close":"2025-04-30","owner":"Bob"},
+                {"deal":"Mobile App Dev",         "company":"RetailMax Co",    "stage":"Qualified",  "value":72000, "prob":40,"close":"2025-08-30","owner":"Carol"},
+            ])
+            headers=["Deal","Company","Stage","Value","Probability","Expected Value","Close Date","Owner"]
+            data_rows=[]; total_ev=0
+            for d in deals:
+                val=d.get("value",0); prob=d.get("prob",50)
+                ev=round(val*prob/100)
+                total_ev+=ev
+                data_rows.append([d.get("deal",""),d.get("company",""),d.get("stage",""),
+                                  val,f"{prob}%",ev,d.get("close",""),d.get("owner","")])
+            data_rows.append(["TOTAL","","",sum(d.get("value",0) for d in deals),"",total_ev,"",""])
+            col_fmts={3:"currency",5:"currency"}; col_widths=[28,20,14,14,12,16,14,12]
+            total_rows={len(data_rows)-1}
+
+        elif doc_type in ("project_tracker","project"):
+            title = p.get("title","PROJECT TRACKER")
+            tasks = p.get("tasks",[
+                {"name":"Requirements Gathering",  "owner":"Alice","priority":"High",  "status":"Done",        "start":"2025-01-06","end":"2025-01-17","pct":100},
+                {"name":"System Architecture",     "owner":"Bob",  "priority":"High",  "status":"Done",        "start":"2025-01-20","end":"2025-02-07","pct":100},
+                {"name":"Database Design",         "owner":"Carol","priority":"Medium","status":"Done",        "start":"2025-02-10","end":"2025-02-21","pct":100},
+                {"name":"Backend Development",     "owner":"David","priority":"High",  "status":"In Progress", "start":"2025-02-24","end":"2025-04-11","pct":65},
+                {"name":"Frontend Development",    "owner":"Eva",  "priority":"High",  "status":"In Progress", "start":"2025-03-03","end":"2025-04-18","pct":40},
+                {"name":"API Integration",         "owner":"Alice","priority":"High",  "status":"Not Started", "start":"2025-04-07","end":"2025-04-25","pct":0},
+                {"name":"Testing & QA",            "owner":"Bob",  "priority":"High",  "status":"Not Started", "start":"2025-04-28","end":"2025-05-16","pct":0},
+                {"name":"User Training",           "owner":"Carol","priority":"Low",   "status":"Not Started", "start":"2025-05-19","end":"2025-05-23","pct":0},
+                {"name":"Deployment",              "owner":"David","priority":"High",  "status":"Not Started", "start":"2025-05-26","end":"2025-05-30","pct":0},
+                {"name":"Post-Launch Support",     "owner":"Eva",  "priority":"Medium","status":"Not Started", "start":"2025-06-02","end":"2025-06-27","pct":0},
+            ])
+            headers=["#","Task","Owner","Priority","Status","Start","End","Progress"]
+            data_rows=[]
+            for i,t in enumerate(tasks,1):
+                data_rows.append([i,t.get("name",""),t.get("owner",""),t.get("priority",""),
+                                  t.get("status",""),t.get("start",""),t.get("end",""),
+                                  f"{t.get('pct',0)}%"])
+            col_fmts={}; total_rows=set(); col_widths=[4,28,12,10,14,12,12,10]
+
+        else:
+            raise ValueError(f"Unknown tabular doc_type: {doc_type}")
+
+        self._apply_table_style(ws, title, period, headers, data_rows,
+                                col_fmts, total_rows, col_widths)
+        ws.sheet_view.showGridLines=False
+        wb.save(filepath)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # TOOL 76 — create_professional_document
+    # ════════════════════════════════════════════════════════════════════════
+
+    def _extract_params_from_sheet(self, file_id: str, sheet_name: str, doc_type: str) -> Dict:
+        """Read an existing sheet and extract parameter values for document generation.
+
+        Financial types (pnl/cashflow/balance_sheet): reads col-A labels + col-B values.
+        Tabular types (payroll/budget/sales/kpi): auto-detects header row + column names.
+        """
+        try:
+            filepath = self._get_filepath(file_id)
+            wb = openpyxl.load_workbook(filepath)
+            if sheet_name not in wb.sheetnames:
+                return {}
+            ws = wb[sheet_name]
+        except Exception:
+            return {}
+
+        dt = doc_type.lower().replace(" ", "_").replace("-", "_")
+
+        # ── Financial statement: label/value pairs in columns A & B ──────────
+        if dt in ("pnl","profit_loss","income_statement",
+                  "cashflow","cash_flow",
+                  "balance_sheet","balance"):
+            LABEL_MAP = {
+                "revenue":"revenue","total revenue":"revenue","net sales":"revenue",
+                "sales":"revenue","gross revenue":"revenue",
+                "cogs":"cogs","cost of goods sold":"cogs","cost of goods":"cogs",
+                "cost of sales":"cogs","cost of revenue":"cogs",
+                "operating expenses":"opex","total operating expenses":"opex","opex":"opex",
+                "depreciation":"depreciation",
+                "interest expense":"interest","interest":"interest",
+                "net income":"net_income","net profit":"net_income",
+                "capital expenditures":"capex","capex":"capex",
+                "changes in working capital":"working_capital_change",
+                "cash & equivalents":"cash","cash and equivalents":"cash","cash":"cash",
+                "accounts receivable":"receivables","receivables":"receivables",
+                "inventory":"inventory",
+                "property & equipment (net)":"ppe","ppe":"ppe",
+                "accounts payable":"payables",
+                "short-term debt":"short_term_debt","long-term debt":"long_term_debt",
+                "common stock":"stock",
+            }
+            result: Dict = {}
+            for row_cells in ws.iter_rows():
+                if len(row_cells) < 2:
+                    continue
+                lv, vv = row_cells[0].value, row_cells[1].value
+                if lv is None or vv is None or not isinstance(vv, (int, float)):
+                    continue
+                label = str(lv).strip().lower().lstrip(" -=")
+                param = LABEL_MAP.get(label)
+                if param:
+                    result[param] = int(vv) if vv == int(vv) else vv
+            return result
+
+        # ── Tabular: detect header row + column mapping ───────────────────────
+        header: List[str] = []
+        body: List[List] = []
+        for row_cells in ws.iter_rows():
+            vals = [c.value for c in row_cells]
+            if not any(v is not None for v in vals):
+                continue
+            if not header:
+                header = [str(v).lower().strip() if v is not None else "" for v in vals]
+            else:
+                body.append(vals)
+
+        if not header or not body:
+            return {}
+
+        def _col(keywords):
+            for i, h in enumerate(header):
+                if any(k in h for k in keywords):
+                    return i
+            return None
+
+        def _get(row, col):
+            return row[col] if col is not None and col < len(row) else None
+
+        def _num(v):
+            if v is None:
+                return None
+            try:
+                return int(float(str(v).replace(",", "").replace("$", "")))
+            except (ValueError, TypeError):
+                return None
+
+        if dt == "payroll":
+            nc = _col(["name","employee"]); sc = _col(["salary","pay","wage","base","compensation"])
+            dc = _col(["dept","department","team"]); bc = _col(["bonus"])
+            emps = []
+            for row in body:
+                name = _get(row, nc); sal = _num(_get(row, sc))
+                if not name and not sal:
+                    continue
+                emp: Dict = {}
+                if name: emp["name"] = str(name)
+                if sal:  emp["salary"] = sal
+                dept = _get(row, dc)
+                if dept: emp["dept"] = str(dept)
+                bonus = _num(_get(row, bc))
+                if bonus: emp["bonus"] = bonus
+                emps.append(emp)
+            return {"employees": emps} if emps else {}
+
+        elif dt in ("budget","budget_actuals"):
+            cc = _col(["category","item","description","name","department"])
+            bc2 = _col(["budget","plan","target","forecast","allocated"])
+            ac = _col(["actual","actuals","real","spent"])
+            cats = []
+            for row in body:
+                name = _get(row, cc)
+                if not name: continue
+                c: Dict = {"name": str(name)}
+                b = _num(_get(row, bc2))
+                if b: c["budget"] = b
+                a = _num(_get(row, ac))
+                if a: c["actual"] = a
+                cats.append(c)
+            return {"categories": cats} if cats else {}
+
+        elif dt in ("sales","sales_report"):
+            mc = _col(["month","period","date","quarter"])
+            uc = _col(["units","qty","quantity","volume","sold"])
+            pc = _col(["price","unit price","rate"])
+            rc = _col(["revenue","sales","amount","total"])
+            rows_out = []
+            for row in body:
+                m = _get(row, mc)
+                if not m: continue
+                entry: Dict = {"month": str(m)}
+                u = _num(_get(row, uc))
+                if u: entry["units"] = u
+                p2 = _num(_get(row, pc))
+                if p2: entry["price"] = p2
+                rv = _num(_get(row, rc))
+                if rv: entry["revenue"] = rv
+                rows_out.append(entry)
+            return {"rows": rows_out} if rows_out else {}
+
+        elif dt in ("kpi","kpi_dashboard"):
+            nc2 = _col(["kpi","metric","name","indicator"])
+            tc  = _col(["target","goal","benchmark"])
+            ac2 = _col(["actual","current","value","result"])
+            metrics = []
+            for row in body:
+                name = _get(row, nc2)
+                if not name: continue
+                m2: Dict = {"name": str(name)}
+                t = _get(row, tc)
+                if t is not None: m2["target"] = str(t)
+                a = _get(row, ac2)
+                if a is not None: m2["actual"] = str(a)
+                metrics.append(m2)
+            return {"metrics": metrics} if metrics else {}
+
+        return {}
+
+    async def create_professional_document(
+        self,
+        file_id: str,
+        doc_type: str,
+        sheet_name: Optional[str] = None,
+        params: Optional[Dict] = None,
+        source_sheet: Optional[str] = None,
+    ) -> Dict:
+        """Tool 76: Create a fully styled professional document on a new sheet.
+
+        doc_type: pnl | cashflow | balance_sheet | budget | sales_report | payroll | kpi
+        params:   optional dict with specific values; random/realistic values used otherwise.
+        source_sheet: if given, read values from this existing sheet and use them as the base
+                      (explicit params always override extracted values).
+        """
+        # Merge source_sheet data under explicit params (explicit wins on conflict)
+        base = self._extract_params_from_sheet(file_id, source_sheet, doc_type) if source_sheet else {}
+        p = {**base, **(params or {})}
+        dt = doc_type.lower().replace(" ","_").replace("-","_")
+
+        FINANCIAL = {
+            "pnl":              ("P&L",          self._make_pnl_rows),
+            "profit_loss":      ("P&L",          self._make_pnl_rows),
+            "income_statement": ("P&L",          self._make_pnl_rows),
+            "cashflow":         ("Cashflow",     self._make_cashflow_rows),
+            "cash_flow":        ("Cashflow",     self._make_cashflow_rows),
+            "balance_sheet":    ("BalanceSheet", self._make_balance_sheet_rows),
+            "balance":          ("BalanceSheet", self._make_balance_sheet_rows),
+        }
+        TABULAR_SHEET = {
+            "budget":"Budget","budget_actuals":"Budget",
+            "sales":"SalesReport","sales_report":"SalesReport",
+            "payroll":"Payroll",
+            "kpi":"KPI","kpi_dashboard":"KPI",
+            "invoice":"Invoice",
+            "inventory":"Inventory","inventory_tracker":"Inventory",
+            "attendance":"Attendance","attendance_tracker":"Attendance",
+            "pipeline":"Pipeline","sales_pipeline":"Pipeline",
+            "project_tracker":"ProjectTracker","project":"ProjectTracker","project_plan":"ProjectTracker",
+        }
+
+        if dt not in FINANCIAL and dt not in TABULAR_SHEET:
+            raise ValueError(
+                f"Unknown doc_type '{doc_type}'. "
+                "Supported: pnl, cashflow, balance_sheet, budget, sales_report, payroll, kpi, "
+                "invoice, inventory, attendance, pipeline, project_tracker"
+            )
+
+        if dt in FINANCIAL:
+            default_sn, generator = FINANCIAL[dt]
+            sn = sheet_name or default_sn
+            # Remove old sheet if present so we start clean
+            fp = self._get_filepath(file_id)
+            wb = openpyxl.load_workbook(fp)
+            if sn in wb.sheetnames:
+                del wb[sn]; wb.save(fp)
+            rows = generator(p)
+            await self.write_range(file_id, sn, "A1", rows)
+            fmt_result = await self.format_financial_sheet(
+                file_id, sn,
+                title=p.get("title"),
+                subtitle=p.get("subtitle", p.get("period")),
+            )
+            return {
+                "message": f"Professional {dt.upper()} created on sheet '{sn}'",
+                "sheet": sn,
+                "title": fmt_result.get("title"),
+                "rows": len(rows),
+            }
+
+        else:
+            sn = sheet_name or TABULAR_SHEET[dt]
+            await self._create_tabular_document(file_id, sn, dt, p)
+            return {
+                "message": f"Professional {dt.upper()} created on sheet '{sn}'",
+                "sheet": sn,
+            }
+
     async def get_column_headers(self, file_id: str, sheet_name: str) -> List[str]:
         """Get column headers from a sheet for LLM context"""
         try:
@@ -4879,6 +6921,68 @@ class MCPService:
         row = int(row_str)
         
         return row, col
+
+    async def insert_image(
+        self,
+        file_id: str,
+        sheet_name: str,
+        image_url: str,
+        anchor_cell: str = "A1",
+        width_pixels: Optional[int] = None,
+        height_pixels: Optional[int] = None
+    ) -> Dict:
+        """Insert an image from a URL into the worksheet at the specified anchor cell."""
+        import urllib.request
+        import tempfile
+        import os
+        from openpyxl.drawing.image import Image as XLImage
+
+        filepath = self._get_filepath(file_id)
+        wb = openpyxl.load_workbook(filepath)
+
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Sheet '{sheet_name}' not found")
+
+        ws = wb[sheet_name]
+
+        # Download image to temp file
+        suffix = ".png"
+        for ext in [".jpg", ".jpeg", ".gif", ".bmp", ".tiff"]:
+            if ext in image_url.lower():
+                suffix = ext
+                break
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            req = urllib.request.Request(image_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                with open(tmp_path, "wb") as f:
+                    f.write(resp.read())
+
+            img = XLImage(tmp_path)
+            if width_pixels:
+                img.width = width_pixels
+            if height_pixels:
+                img.height = height_pixels
+
+            img.anchor = anchor_cell
+            ws.add_image(img)
+            wb.save(filepath)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+        return {
+            "file_id": file_id,
+            "sheet_name": sheet_name,
+            "anchor_cell": anchor_cell,
+            "image_url": image_url,
+            "message": f"Image inserted at cell {anchor_cell} in sheet '{sheet_name}'"
+        }
 
 # Create service instance
 mcp_service = MCPService()

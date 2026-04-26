@@ -1,295 +1,426 @@
 """
-LLM Service - ENHANCED WITH STUDENT DEMO EXAMPLES
-Comprehensive prompts with real demo scenarios
+LLM Service — Claude-primary with OpenAI fallback
+Converts natural language → tool operations for Excel automation.
+
+Key fixes over previous version:
+1. Claude is default provider (OpenAI kept as commented fallback)
+2. Parameter normalization layer — maps LLM param variants to actual method signatures
+3. Robust JSON parsing — handles markdown blocks, wrapped objects, single operations
+4. Temperature 0.0 for deterministic structured output
+5. Categorized tool list in prompt so LLM isn't overwhelmed
 """
 
 from typing import List, Dict, Optional, Any
 import json
+import re
 from loguru import logger
 from datetime import datetime
-
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None
 
 try:
     from anthropic import Anthropic
 except ImportError:
     Anthropic = None
 
+# OpenAI kept as fallback
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
 from app.core.config import settings
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# PARAMETER NORMALIZATION — Handles LLM param-name variations
+# ════════════════════════════════════════════════════════════════════════════
+
+PARAM_ALIASES: Dict[str, str] = {
+    # column name variants
+    "column": "column_name",
+    "col": "column_name",
+    "col_name": "column_name",
+    "source_col": "column_name",
+    "target_col": "target_column",
+    "target": "target_column",
+    "output_column": "target_column",
+    "result_column": "target_column",
+    "dest_column": "target_column",
+    "new_col": "new_column_name",
+    "new_col_name": "new_column_name",
+    "old_column_name": "old_name",
+    # row variants
+    "row": "row_index",
+    "index": "row_index",
+    # sheet variants
+    "sheet": "sheet_name",
+    # sort
+    "sort_column": "sort_by",
+    "sort_columns": "sort_by",
+    "asc": "ascending",
+    # find/replace
+    "search": "find_value",
+    # chart
+    "chart": "chart_type",
+    "x": "x_column",
+    "y": "y_column",
+    # text
+    "sep": "separator",
+    "delim": "delimiter",
+    # fill
+    "min": "min_value",
+    "max": "max_value",
+    # misc
+    "mappings": "rename_map",
+    "case": "case_style",
+    "count": "amount",
+    "name": "person_name",
+    "cell": "cell_address",
+    "range": "range_notation",
+    "group": "group_by",
+    "agg": "aggfunc",
+    "aggregation": "aggfunc",
+    # date intelligence / analytics — only safe, unambiguous aliases kept global
+    "date_period": "period",
+    "time_period": "period",
+    "period_filter": "period",
+    # waterfall chart — label_range/value_range are unambiguous
+    "label_range": "labels_range",
+    "value_range": "values_range",
+    "categories_range": "labels_range",
+    # forecast — unambiguous aliases only
+    "forecast_periods": "periods",
+    "n_periods": "periods",
+    # NOTE: "date_column"→"label_column", "group_by"→"period_type", "data_range"→"values_range"
+    # are handled TOOL-SPECIFICALLY below in normalize_parameters() to avoid cross-tool conflicts
+    "data_column": "value_column",
+    # what-if / sensitivity
+    "v1_values": "variable1_values",
+    "v2_values": "variable2_values",
+    "row_values": "variable1_values",
+    "col_values": "variable2_values",
+    "x_values": "variable1_values",
+    "y_values": "variable2_values",
+    "v1_name": "variable1_name",
+    "v2_name": "variable2_name",
+    "row_variable": "variable1_name",
+    "col_variable": "variable2_name",
+    "metric": "formula",
+    "output_metric": "formula",
+    "calculation": "formula",
+    # source/output sheet
+    "source_sheet": "source_sheet",
+    "from_sheet": "source_sheet",
+    "data_sheet": "source_sheet",
+    "output": "output_sheet",
+    "result_sheet": "output_sheet",
+    "destination_sheet": "output_sheet",
+    "dest_sheet": "output_sheet",
+}
+
+
+def normalize_parameters(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize parameter names from LLM output to match actual method signatures.
+    This bridges the gap between natural LLM output and strict Python signatures.
+
+    Strategy:
+    1. If a key is a known alias, remap it to canonical name
+    2. Avoid remapping if the canonical name already exists in params
+    3. Special handling for tools with known conflicts
+    """
+    if not params:
+        return params
+
+    normalized = {}
+    for key, value in params.items():
+        # Never remap core identifiers
+        if key in ("file_id", "sheet_name"):
+            normalized[key] = value
+            continue
+
+        canonical = PARAM_ALIASES.get(key)
+        if canonical and canonical not in params:
+            normalized[canonical] = value
+        else:
+            normalized[key] = value
+
+    # ── Tool-specific overrides ──
+
+    # fill_column: LLM often sends "column" but method expects "column_name"
+    if tool_name == "fill_column":
+        if "column" in normalized and "column_name" not in normalized:
+            normalized["column_name"] = normalized.pop("column")
+
+    # delete_columns: ensure 'columns' is a list
+    if tool_name == "delete_columns":
+        if isinstance(normalized.get("columns"), str):
+            normalized["columns"] = [normalized["columns"]]
+
+    # range tools: LLM sends "range" but method expects "range_notation"
+    if "range" in normalized and "range_notation" not in normalized:
+        range_tools = {
+            "read_range", "conditional_formatting", "set_cell_style",
+            "add_data_validation", "set_print_area", "create_named_range",
+            "fill_down", "set_number_format", "create_excel_table"
+        }
+        if tool_name in range_tools:
+            normalized["range_notation"] = normalized.pop("range")
+
+    # cell tools: LLM sends "cell" but method expects "cell_address"
+    if "cell" in normalized and "cell_address" not in normalized:
+        cell_tools = {"update_cell", "apply_formula", "add_comment", "get_cell_history"}
+        if tool_name in cell_tools:
+            normalized["cell_address"] = normalized.pop("cell")
+
+    # ── FIX 1: apply_formula — auto-prepend "=" if missing ──────────────────
+    if tool_name == "apply_formula":
+        f = normalized.get("formula")
+        if f and isinstance(f, str) and not f.startswith("="):
+            normalized["formula"] = "=" + f
+
+    # ── FIX 2: conditional_formatting — normalise fill_color hex values ──────
+    # Accept "#FF0000", "FF0000", "red", "green", "blue", "yellow", "orange"
+    if tool_name == "conditional_formatting":
+        _NAMED_COLORS = {
+            "red": "FF0000", "green": "00AA00", "darkgreen": "006400",
+            "lightgreen": "90EE90", "yellow": "FFFF00", "orange": "FFA500",
+            "blue": "0000FF", "lightblue": "ADD8E6", "purple": "800080",
+            "pink": "FFC0CB", "white": "FFFFFF", "black": "000000",
+            "grey": "808080", "gray": "808080",
+        }
+        for key in ("fill_color", "start_color", "mid_color", "end_color"):
+            raw = normalized.get(key) or (normalized.get("params") or {}).get(key)
+            if raw and isinstance(raw, str):
+                clean = raw.strip().lstrip("#").upper()
+                if clean.lower() in _NAMED_COLORS:
+                    clean = _NAMED_COLORS[clean.lower()].upper()
+                # Ensure exactly 6 hex chars
+                if len(clean) == 3:
+                    clean = "".join(c*2 for c in clean)
+                if len(clean) == 6:
+                    if key in normalized:
+                        normalized[key] = clean
+                    elif isinstance(normalized.get("params"), dict):
+                        normalized["params"][key] = clean
+
+    # ── FIX 3: ascending — normalise boolean-like strings ────────────────────
+    if "ascending" in normalized:
+        v = normalized["ascending"]
+        if isinstance(v, str):
+            normalized["ascending"] = v.lower() not in ("false", "no", "desc", "descending", "0")
+
+    # ── FIX 4: aggfunc / operation — lowercase enum values ───────────────────
+    for key in ("aggfunc", "operation"):
+        if key in normalized and isinstance(normalized[key], str):
+            normalized[key] = normalized[key].lower().strip()
+            # map common aliases
+            _AGG_MAP = {"average": "mean", "avg": "mean", "total": "sum",
+                        "count all": "count", "maximum": "max", "minimum": "min"}
+            normalized[key] = _AGG_MAP.get(normalized[key], normalized[key])
+
+    # ── FIX 5: informal number strings → int (e.g. "1.2M", "500K", "$500,000") ─
+    _NUMBER_KEYS = {"revenue","cogs","opex","depreciation","interest","net_income",
+                    "capex","cash","receivables","inventory","ppe","payables",
+                    "short_term_debt","long_term_debt","stock","amount","value",
+                    "min_value","max_value","working_capital_change","debt_change","dividends"}
+    def _parse_informal_number(v):
+        if isinstance(v, (int, float)):
+            return v
+        if not isinstance(v, str):
+            return v
+        s = v.strip().replace(",", "").replace("$", "").replace(" ", "")
+        mult = 1
+        if s.lower().endswith("m"):
+            mult = 1_000_000; s = s[:-1]
+        elif s.lower().endswith("k"):
+            mult = 1_000; s = s[:-1]
+        elif s.lower().endswith("b"):
+            mult = 1_000_000_000; s = s[:-1]
+        try:
+            return int(float(s) * mult)
+        except (ValueError, TypeError):
+            return v
+    if tool_name == "create_professional_document" and "params" in normalized:
+        p = normalized["params"]
+        if isinstance(p, dict):
+            for k in list(p.keys()):
+                if k in _NUMBER_KEYS:
+                    p[k] = _parse_informal_number(p[k])
+    # Also parse top-level number params (for direct tool calls)
+    for k in _NUMBER_KEYS:
+        if k in normalized:
+            normalized[k] = _parse_informal_number(normalized[k])
+
+    # ── FIX 6: tool-specific aliases that would conflict globally ────────────
+    # forecast_trendline: "date_column" / "period_column" → "label_column"
+    # (NOT global because date_filter_analysis and compare_periods use date_column as real param)
+    if tool_name == "forecast_trendline":
+        for _alias in ("date_column", "period_column", "x_column"):
+            if _alias in normalized and "label_column" not in normalized:
+                normalized["label_column"] = normalized.pop(_alias)
+
+    # compare_periods: "group_by" / "groupby" / "frequency" / "granularity" → "period_type"
+    # (NOT global because conditional_aggregate uses group_col, not period_type)
+    if tool_name == "compare_periods":
+        for _alias in ("group_by", "groupby", "frequency", "granularity"):
+            if _alias in normalized and "period_type" not in normalized:
+                normalized["period_type"] = normalized.pop(_alias)
+
+    # create_waterfall_chart: "data_range" → "values_range"
+    # (NOT global because ALL existing chart tools use data_range as their real param name)
+    if tool_name == "create_waterfall_chart":
+        if "data_range" in normalized and "values_range" not in normalized:
+            normalized["values_range"] = normalized.pop("data_range")
+
+    # date_filter_analysis: "columns" → "value_columns" (handles plural vs singular)
+    if tool_name == "date_filter_analysis":
+        if "value_column" in normalized and "value_columns" not in normalized:
+            normalized["value_columns"] = [normalized.pop("value_column")]
+        if "columns" in normalized and "value_columns" not in normalized:
+            v = normalized.pop("columns")
+            normalized["value_columns"] = v if isinstance(v, list) else [v]
+
+    return normalized
+
+
 class LLMService:
-    """Service for interacting with OpenAI and Claude for Excel automation"""
+    """Service for interacting with Claude (primary) and OpenAI (fallback) for Excel automation"""
 
     def __init__(self):
-        self.default_provider = (settings.LLM_PROVIDER or "openai").strip().lower()
+        self.default_provider = (settings.LLM_PROVIDER or "claude").strip().lower()
 
-        self.openai_client = None
-        if OpenAI and settings.OPENAI_API_KEY:
-            self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
-
+        # Primary: Claude
         self.claude_client = None
         if Anthropic and settings.ANTHROPIC_API_KEY:
             self.claude_client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+            logger.info("✅ Claude client initialized (primary)")
+
+        # Fallback: OpenAI
+        self.openai_client = None
+        if OpenAI and settings.OPENAI_API_KEY:
+            self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+            logger.info("✅ OpenAI client initialized (fallback)")
+
+    # ════════════════════════════════════════════════════════════════
+    # PROVIDER RESOLUTION
+    # ════════════════════════════════════════════════════════════════
 
     def _resolve_provider(self, provider: Optional[str] = None) -> str:
-        """Resolve active provider from request override or default settings."""
-
-        active_provider = (provider or self.default_provider or "openai").strip().lower()
-        if active_provider not in {"openai", "claude"}:
+        active = (provider or self.default_provider or "claude").strip().lower()
+        if active not in {"openai", "claude"}:
             raise ValueError("Invalid provider. Use 'openai' or 'claude'.")
-        return active_provider
+        return active
+
+    def _resolve_model(self, model: Optional[str] = None) -> str:
+        """Resolve Claude model from friendly name or full ID. Default: sonnet."""
+        if not model:
+            return settings.CLAUDE_MODEL  # default
+        m = model.strip().lower()
+        model_map = {
+            "sonnet": settings.CLAUDE_MODEL_SONNET,
+            "opus": settings.CLAUDE_MODEL_OPUS,
+        }
+        return model_map.get(m, model if m.startswith("claude-") else settings.CLAUDE_MODEL)
 
     def _ensure_provider_client(self, provider: str) -> None:
-        """Validate that the selected provider client and API key are configured."""
-
-        if provider == "openai":
+        if provider == "claude":
+            if not Anthropic:
+                raise ValueError("Anthropic SDK not installed. Run: pip install anthropic")
+            if not settings.ANTHROPIC_API_KEY:
+                raise ValueError("ANTHROPIC_API_KEY not configured.")
+            if not self.claude_client:
+                self.claude_client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        elif provider == "openai":
             if not OpenAI:
-                raise ValueError("OpenAI SDK is not installed. Please install the 'openai' package.")
+                raise ValueError("OpenAI SDK not installed. Run: pip install openai")
             if not settings.OPENAI_API_KEY:
-                raise ValueError("OPENAI_API_KEY is not configured.")
+                raise ValueError("OPENAI_API_KEY not configured.")
             if not self.openai_client:
                 self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
-            return
 
-        if not Anthropic:
-            raise ValueError("Anthropic SDK is not installed. Please install the 'anthropic' package.")
-        if not settings.ANTHROPIC_API_KEY:
-            raise ValueError("ANTHROPIC_API_KEY is not configured.")
-        if not self.claude_client:
-            self.claude_client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    # ════════════════════════════════════════════════════════════════
+    # CLAUDE HELPERS
+    # ════════════════════════════════════════════════════════════════
 
     def _normalize_claude_messages(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        """Convert messages into the role/content shape required by Claude."""
-
-        normalized_messages: List[Dict[str, str]] = []
-        for message in messages:
-            role = (message.get("role") or "user").strip().lower()
+        normalized: List[Dict[str, str]] = []
+        for msg in messages:
+            role = (msg.get("role") or "user").strip().lower()
             if role not in {"user", "assistant"}:
                 continue
-
-            content = message.get("content")
+            content = msg.get("content")
             if content is None:
                 content = ""
             if not isinstance(content, str):
                 content = str(content)
-
-            normalized_messages.append({"role": role, "content": content})
-
-        return normalized_messages
+            normalized.append({"role": role, "content": content})
+        return normalized
 
     def _extract_claude_text(self, response: Any) -> str:
-        """Extract plain text from Anthropic content blocks."""
-
-        content_blocks = getattr(response, "content", []) or []
-        text_parts: List[str] = []
-
-        for block in content_blocks:
+        blocks = getattr(response, "content", []) or []
+        parts: List[str] = []
+        for block in blocks:
             if isinstance(block, dict):
                 if block.get("type") == "text" and block.get("text"):
-                    text_parts.append(str(block["text"]))
+                    parts.append(str(block["text"]))
                 continue
-
             if getattr(block, "type", None) == "text":
-                block_text = getattr(block, "text", None)
-                if block_text:
-                    text_parts.append(str(block_text))
+                t = getattr(block, "text", None)
+                if t:
+                    parts.append(str(t))
+        return "\n".join(parts).strip()
 
-        return "\n".join(text_parts).strip()
+    # ════════════════════════════════════════════════════════════════
+    # GENERAL CONVERSATION
+    # ════════════════════════════════════════════════════════════════
 
     def generate_response(
         self,
         messages: List[Dict[str, str]],
         session_summary: Optional[str] = None,
-        provider: Optional[str] = None
+        provider: Optional[str] = None,
+        model: Optional[str] = None
     ) -> str:
-        """Generate AI response based on conversation history."""
-
         system_prompt = self._build_system_prompt(session_summary)
-        active_provider = self._resolve_provider(provider)
+        active = self._resolve_provider(provider)
+        resolved_model = self._resolve_model(model)
 
         try:
-            self._ensure_provider_client(active_provider)
+            self._ensure_provider_client(active)
 
-            if active_provider == "openai":
+            if active == "claude":
+                claude_msgs = self._normalize_claude_messages(messages)
+                if not claude_msgs:
+                    claude_msgs = [{"role": "user", "content": "Please continue."}]
+                response = self.claude_client.messages.create(
+                    model=resolved_model,
+                    system=system_prompt,
+                    messages=claude_msgs,
+                    temperature=0.7,
+                    max_tokens=2000
+                )
+                return self._extract_claude_text(response) or "I apologize, I couldn't generate a response."
+
+            else:  # openai
                 response = self.openai_client.chat.completions.create(
                     model=settings.OPENAI_MODEL,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        *messages
-                    ],
+                    messages=[{"role": "system", "content": system_prompt}, *messages],
                     temperature=0.7,
                     max_completion_tokens=2000
                 )
-
                 return response.choices[0].message.content or "I apologize, I couldn't generate a response."
 
-            claude_messages = self._normalize_claude_messages(messages)
-            if not claude_messages:
-                claude_messages = [{"role": "user", "content": "Please continue."}]
-
-            response = self.claude_client.messages.create(
-                model=settings.CLAUDE_MODEL,
-                system=system_prompt,
-                messages=claude_messages,
-                temperature=0.7,
-                max_tokens=2000
-            )
-
-            response_text = self._extract_claude_text(response)
-            return response_text or "I apologize, I couldn't generate a response."
-
         except Exception as e:
-            logger.error(f"LLM error ({active_provider}): {e}")
+            logger.error(f"LLM error ({active}): {e}")
             raise Exception(f"Failed to generate response: {str(e)}")
 
-    def plan_excel_operations(
-        self,
-        user_intent: str,
-        context: Dict,
-        provider: Optional[str] = None
-    ) -> Dict:
-        """
-        Plan Excel operations based on user intent.
+    # ════════════════════════════════════════════════════════════════
+    # EXCEL INTENT DETECTION
+    # ════════════════════════════════════════════════════════════════
 
-        Returns JSON with steps:
-        {
-            "steps": [
-                {
-                    "step": 1,
-                    "tool": "bulk_update",
-                    "parameters": {...},
-                    "description": "..."
-                }
-            ]
-        }
-        """
+    def detect_excel_intent(self, message: str, file_id: Optional[str] = None) -> bool:
+        msg = message.lower()
 
-        planning_prompt = self._build_planning_prompt(user_intent, context)
-        active_provider = self._resolve_provider(provider)
-        response_text = "{}"
-
-        try:
-            self._ensure_provider_client(active_provider)
-
-            if active_provider == "openai":
-                response = self.openai_client.chat.completions.create(
-                    model=settings.OPENAI_MODEL,
-                    messages=[
-                        {"role": "system", "content": planning_prompt}
-                    ],
-                    temperature=0.3,
-                    max_completion_tokens=2000
-                )
-                response_text = response.choices[0].message.content or "{}"
-            else:
-                response = self.claude_client.messages.create(
-                    model=settings.CLAUDE_MODEL,
-                    messages=[
-                        {"role": "user", "content": planning_prompt}
-                    ],
-                    temperature=0.3,
-                    max_tokens=2000
-                )
-                response_text = self._extract_claude_text(response) or "{}"
-
-            # Clean JSON
-            response_text = response_text.strip()
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.startswith("```"):
-                response_text = response_text[3:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
-            response_text = response_text.strip()
-
-            plan = json.loads(response_text)
-
-            logger.info(f"Generated plan with {len(plan.get('steps', []))} steps")
-
-            return plan
-
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error: {e}")
-            logger.error(f"Response was: {response_text}")
-            raise Exception("Failed to parse operation plan")
-        except Exception as e:
-            logger.error(f"Planning error ({active_provider}): {e}")
-            raise Exception(f"Failed to plan operations: {str(e)}")
-
-    def generate_session_summary(
-        self,
-        messages: List[Dict],
-        operations: Optional[List[Dict]] = None,
-        provider: Optional[str] = None
-    ) -> str:
-        """Generate a 2-4 sentence summary of the session."""
-
-        operations = operations or []
-        active_provider = self._resolve_provider(provider)
-
-        try:
-            summary_prompt = f"""
-Based on this conversation and operations, generate a 2-4 sentence summary.
-Focus on: what file was used, what operations were performed, key data points.
-
-Recent messages:
-{json.dumps(messages[-10:], indent=2)}
-
-Recent operations:
-{json.dumps(operations[-5:], indent=2)}
-
-Generate a concise summary (2-4 sentences only):
-"""
-
-            self._ensure_provider_client(active_provider)
-
-            if active_provider == "openai":
-                response = self.openai_client.chat.completions.create(
-                    model=settings.OPENAI_MODEL,
-                    messages=[
-                        {"role": "system", "content": "You are a concise summarizer. Output only 2-4 sentences."},
-                        {"role": "user", "content": summary_prompt}
-                    ],
-                    temperature=0.5,
-                    max_completion_tokens=200
-                )
-
-                return response.choices[0].message.content or "Session summary unavailable."
-
-            response = self.claude_client.messages.create(
-                model=settings.CLAUDE_MODEL,
-                system="You are a concise summarizer. Output only 2-4 sentences.",
-                messages=[
-                    {"role": "user", "content": summary_prompt}
-                ],
-                temperature=0.5,
-                max_tokens=200
-            )
-
-            response_text = self._extract_claude_text(response)
-            return response_text or "Session summary unavailable."
-
-        except Exception as e:
-            logger.error(f"Summary generation error ({active_provider}): {e}")
-            return "Session in progress."
-
-    def detect_excel_intent(
-        self,
-        message: str,
-        file_id: Optional[str] = None
-    ) -> bool:
-        """
-        Detect if message requires Excel operations.
-
-        Returns: True if Excel operation needed, False if general chat
-        """
-
-        message_lower = message.lower()
-
-        # Excel operation keywords
         excel_keywords = [
             'update', 'change', 'modify', 'set', 'add', 'create', 'delete',
             'remove', 'show', 'display', 'find', 'search', 'filter', 'calculate',
@@ -298,9 +429,7 @@ Generate a concise summary (2-4 sentences only):
             'read', 'list', 'sheets', 'cells', 'range', 'fill', 'random',
             'column', 'put', 'insert', 'values', 'generate', 'replace', 'rename',
             'swap', 'convert', 'substitute',
-            # Metadata and structure keywords
             'metadata', 'structure', 'info', 'details', 'properties',
-            # New tool keywords
             'pivot', 'vlookup', 'hlookup', 'lookup', 'duplicate', 'transpose',
             'split', 'merge', 'concatenate', 'statistics', 'stats', 'correlation',
             'frequency', 'percentile', 'distribution', 'histogram',
@@ -310,970 +439,605 @@ Generate a concise summary (2-4 sentences only):
             'import', 'export', 'csv', 'json', 'copy sheet', 'move sheet',
             'named range', 'comment', 'batch', 'chart', 'bar chart', 'line chart',
             'pie chart', 'scatter', 'plot', 'graph', 'visualiz',
-            'formula', 'vlookup', 'sumif', 'countif', 'averageif',
+            'formula', 'sumif', 'countif', 'averageif',
             'conditional', 'data bar', 'icon set', 'color scale',
             'auto fit', 'width', 'detect header',
-            # Data engineering and schema tools
             'join', 'merge sheets', 'append sheets', 'union', 'consolidate',
             'unpivot', 'melt', 'long format', 'wide format',
             'excel table', 'table style', 'schema', 'required columns',
             'standardize dates', 'date format', 'normalize date',
             'number format', 'currency format', 'percentage format',
             'fill formula', 'drag formula', 'copy formula down', 'validate schema',
-            # Structure and cleaning tools
-            'insert row', 'insert rows', 'delete rows by index',
+            'insert row', 'insert rows', 'delete rows',
             'insert column', 'insert columns', 'delete column', 'delete columns',
             'rename columns', 'fill missing', 'missing values', 'impute',
             'text case', 'uppercase', 'lowercase', 'proper case',
-            'trim whitespace', 'remove extra spaces', 'clean text'
+            'trim whitespace', 'remove extra spaces', 'clean text',
+            'give', 'apply', 'subtract', 'multiply', 'divide',
+            'row', 'data', 'workbook', 'new file', 'new excel', 'write',
+            'professional', 'presentable', 'financial report', 'style the',
+            'format the', 'make it look', 'pnl styling', 'cashflow styling',
+            'balance sheet', 'balance_sheet', 'payroll', 'sales report',
+            'kpi', 'kpi dashboard', 'budget', 'budget vs', 'income statement',
+            'create pnl', 'create cashflow', 'make pnl', 'make cashflow',
+            'analyze', 'analysis', 'trend', 'trends', 'top ', 'best ',
+            'worst ', 'clean up', 'improve', 'summarize', 'summary',
+            'board', 'presentation', 'executive', 'what-if', 'scenario',
+            'last month', 'this year', 'quarter', 'q1', 'q2', 'q3', 'q4',
+            'mtd', 'ytd', 'qtd', 'month to date', 'year to date', 'quarter to date',
+            'last 30 days', 'last 90 days', 'rolling', 'period',
+            'month by month', 'year over year', 'yoy', 'mom', 'qoq',
+            'compare month', 'compare quarter', 'compare year', 'growth rate',
+            'forecast', 'predict', 'projection', 'extrapolate', 'trendline',
+            'next month', 'next quarter', 'next year', 'future', 'outlook',
+            'waterfall', 'bridge chart', 'contribution chart',
+            'sensitivity', 'what if', 'scenario table', 'best case', 'worst case',
+            'how does', 'impact of', 'effect of',
+            'invoice', 'inventory', 'stock', 'attendance', 'timesheet',
+            'pipeline', 'sales pipeline', 'project tracker', 'project plan',
+            'task list', 'milestone', 'deal tracker',
+            'group rows', 'collapse rows', 'outline', 'drill down', 'expand',
+            'running total', 'cumulative', 'cumulative sum', 'progressive total',
+            'reference sheet', 'pull from sheet', 'link sheet', 'cross sheet',
+            'from another sheet', 'consolidate', 'another sheet',
+            'highlight row', 'color row', 'mark row', 'highlight entire',
+            'formula based', 'conditional highlight', 'row condition',
+            'dashboard', 'executive view', 'management report', 'summary view',
+            'organize', 'arrange', 'order by', 'rank', 'alphabetical',
+            'excel ready', 'presentation ready', 'board ready', 'clean for sharing',
+            'make it ready', 'share this', 'prepare for',
         ]
 
-        # Action words that indicate operations
-        action_words = [
-            'give', 'apply', 'add', 'subtract', 'multiply', 'divide'
-        ]
-
-        # Check if any keyword present
-        has_keyword = any(keyword in message_lower for keyword in excel_keywords)
-        has_action = any(action in message_lower for action in action_words)
-
-        # If file_id is explicitly provided, likely an Excel operation
         if file_id:
             return True
+        return any(kw in msg for kw in excel_keywords)
 
-        # If keywords or actions present, likely Excel operation
-        if has_keyword or has_action:
-            return True
+    # ════════════════════════════════════════════════════════════════
+    # OPERATION PLANNING — The core intelligence
+    # ════════════════════════════════════════════════════════════════
 
-        # Default to general chat
-        return False
+    def plan_excel_operations(
+        self,
+        user_intent: str,
+        context: Dict,
+        provider: Optional[str] = None,
+        model: Optional[str] = None
+    ) -> Dict:
+        """
+        Plan Excel operations based on natural language user intent.
+        Returns: {"steps": [{"step": 1, "tool": "...", "parameters": {...}, "description": "..."}]}
+        """
+        planning_prompt = self._build_planning_prompt(user_intent, context)
+        active = self._resolve_provider(provider)
+        resolved_model = self._resolve_model(model)
+        raw_text = "{}"
+
+        try:
+            self._ensure_provider_client(active)
+
+            if active == "claude":
+                response = self.claude_client.messages.create(
+                    model=resolved_model,
+                    messages=[{"role": "user", "content": planning_prompt}],
+                    temperature=0.0,  # Deterministic for structured output
+                    max_tokens=4096
+                )
+                raw_text = self._extract_claude_text(response) or "{}"
+            else:  # openai fallback
+                response = self.openai_client.chat.completions.create(
+                    model=settings.OPENAI_MODEL,
+                    messages=[{"role": "system", "content": planning_prompt}],
+                    temperature=0.0,
+                    max_completion_tokens=4096
+                )
+                raw_text = response.choices[0].message.content or "{}"
+
+            # ── Parse JSON robustly ──
+            plan = self._parse_plan_json(raw_text)
+
+            # ── Normalize parameters in each step ──
+            for step in plan.get("steps", []):
+                tool_name = step.get("tool", "")
+                params = step.get("parameters", {})
+                step["parameters"] = normalize_parameters(tool_name, params)
+
+            logger.info(f"📋 Plan: {len(plan.get('steps', []))} step(s) → {[s['tool'] for s in plan.get('steps', [])]}")
+            return plan
+
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error: {e}\nRaw: {raw_text[:500]}")
+            raise Exception("Failed to parse operation plan from LLM response")
+        except Exception as e:
+            logger.error(f"Planning error ({active}): {e}")
+            raise Exception(f"Failed to plan operations: {str(e)}")
+
+    def _parse_plan_json(self, raw_text: str) -> Dict:
+        """
+        Robustly parse LLM response into a plan dict.
+        Handles: raw JSON, markdown-wrapped JSON, array vs object format.
+        """
+        cleaned = raw_text.strip()
+
+        # Strip markdown code fences
+        if "```" in cleaned:
+            match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', cleaned, re.DOTALL)
+            if match:
+                cleaned = match.group(1).strip()
+
+        # Try direct parse
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError:
+            # Try to find a JSON object or array in the text
+            obj_match = re.search(r'\{.*\}', cleaned, re.DOTALL)
+            arr_match = re.search(r'\[.*\]', cleaned, re.DOTALL)
+            if obj_match:
+                parsed = json.loads(obj_match.group(0))
+            elif arr_match:
+                parsed = json.loads(arr_match.group(0))
+            else:
+                raise
+
+        # Normalize to {"steps": [...]} format
+        if isinstance(parsed, list):
+            return {"steps": parsed}
+        elif isinstance(parsed, dict):
+            if "steps" in parsed:
+                return parsed
+            for key in ("operations", "plan", "actions", "tools"):
+                if key in parsed and isinstance(parsed[key], list):
+                    return {"steps": parsed[key]}
+            if "tool" in parsed:
+                return {"steps": [parsed]}
+
+        return {"steps": []}
+
+    # ════════════════════════════════════════════════════════════════
+    # SESSION SUMMARY
+    # ════════════════════════════════════════════════════════════════
+
+    def generate_session_summary(
+        self,
+        messages: List[Dict],
+        operations: Optional[List[Dict]] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None
+    ) -> str:
+        operations = operations or []
+        active = self._resolve_provider(provider)
+        resolved_model = self._resolve_model(model)
+
+        try:
+            prompt = f"""Based on this conversation and operations, generate a 2-4 sentence summary.
+Focus on: what file was used, what operations were performed, key data points.
+
+Recent messages:
+{json.dumps(messages[-10:], indent=2)}
+
+Recent operations:
+{json.dumps(operations[-5:], indent=2)}
+
+Generate a concise summary (2-4 sentences only):"""
+
+            self._ensure_provider_client(active)
+
+            if active == "claude":
+                response = self.claude_client.messages.create(
+                    model=resolved_model,
+                    system="You are a concise summarizer. Output only 2-4 sentences.",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.5,
+                    max_tokens=200
+                )
+                return self._extract_claude_text(response) or "Session in progress."
+            else:
+                response = self.openai_client.chat.completions.create(
+                    model=settings.OPENAI_MODEL,
+                    messages=[
+                        {"role": "system", "content": "You are a concise summarizer. Output only 2-4 sentences."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.5,
+                    max_completion_tokens=200
+                )
+                return response.choices[0].message.content or "Session in progress."
+
+        except Exception as e:
+            logger.error(f"Summary error ({active}): {e}")
+            return "Session in progress."
+
+    # ════════════════════════════════════════════════════════════════
+    # FORMAT OPERATION RESULTS
+    # ════════════════════════════════════════════════════════════════
 
     def format_operation_results(
         self,
         steps: List[Dict],
         results: List[Dict],
-        provider: Optional[str] = None
+        provider: Optional[str] = None,
+        model: Optional[str] = None
     ) -> str:
-      """Format operation results into a deterministic, execution-grounded response."""
+        """Format execution results into a human-readable response (no LLM call)."""
+        _ = steps
+        _ = provider
+        _ = model
 
-      _ = steps  # Kept for backward-compatible signature.
-      _ = provider
+        if not results:
+            return "No operations were executed."
 
-      if not results:
-        return "No operations were executed."
+        successful = [r for r in results if r.get("status") == "completed"]
+        failed = [r for r in results if r.get("status") == "failed"]
 
-      successful_results = [r for r in results if r.get("status") == "completed"]
-      failed_results = [r for r in results if r.get("status") == "failed"]
+        parts: List[str] = []
 
-      message_parts: List[str] = []
+        if successful:
+            tools = [r.get("tool", "unknown") for r in successful]
+            parts.append(f"I completed {len(successful)} operation(s) successfully: {', '.join(tools)}.")
 
-      if successful_results:
-        successful_tools = [r.get("tool", "unknown tool") for r in successful_results]
-        message_parts.append(
-          f"I completed {len(successful_results)} operation(s) successfully: {', '.join(successful_tools)}."
-        )
+        if failed:
+            tools = [r.get("tool", "unknown") for r in failed]
+            reason = failed[0].get("error") or "Unknown error"
+            parts.append(f"{len(failed)} operation(s) failed: {', '.join(tools)}. First failure reason: {reason}.")
 
-      if failed_results:
-        failed_tools = [r.get("tool", "unknown tool") for r in failed_results]
-        first_failure = failed_results[0]
-        failure_reason = first_failure.get("error") or "Unknown error"
+        return " ".join(parts) if parts else "Operations completed."
 
-        message_parts.append(
-          f"{len(failed_results)} operation(s) failed: {', '.join(failed_tools)}. "
-          f"First failure reason: {failure_reason}."
-        )
+    # ════════════════════════════════════════════════════════════════
+    # SYSTEM PROMPT — General conversation
+    # ════════════════════════════════════════════════════════════════
 
-        if any("chart" in str(tool).lower() or "plot" in str(tool).lower() for tool in failed_tools):
-          message_parts.append(
-            "A chart step failed, so charts from failed steps were not added to the workbook."
-          )
-
-      if not message_parts:
-        return "Operations completed."
-
-      return " ".join(message_parts)
-    
     def _build_system_prompt(self, session_summary: Optional[str] = None) -> str:
-        """Build system prompt for general conversation"""
-
-        base_prompt = """You are Excelerate, an advanced AI assistant that provides complete Excel automation through natural language. You are powered by 74 specialized MCP tools and a formula engine supporting 106+ Excel-compatible functions.
+        base = """You are WorkflowGenie, an advanced AI assistant for complete Excel automation through natural language. You are powered by 74 specialized MCP tools and a formula engine supporting 106+ Excel-compatible functions.
 
 You help users with ANY Excel task through simple conversation:
-- Data manipulation: "Update John's salary", "Remove duplicates", "Split the Name column by comma"
-- Calculations: "Calculate total marks", "Show descriptive statistics", "Create a correlation matrix"
-- Lookups: "VLOOKUP for student ID 101", "Find and replace all instances of X with Y"
-- Formatting: "Bold the header row", "Add conditional formatting - green for >90", "Auto-fit all columns"
-- Charts: "Create a bar chart of sales data", "Make a pie chart of department distribution"
-- Import/Export: "Export this sheet as CSV", "Import this JSON data"
-- Formulas: "Apply SUM formula", "Add an IF formula for pass/fail", "Calculate PMT for loan"
-- Sheet management: "Copy this sheet", "Freeze the header row", "Protect this sheet"
+- Data manipulation: "Update John's salary", "Remove duplicates", "Split Name by comma"
+- Calculations: "Calculate total marks", "Descriptive statistics", "Correlation matrix"
+- Lookups: "VLOOKUP for student ID 101", "Find and replace all X with Y"
+- Formatting: "Bold header row", "Conditional formatting green for >90", "Auto-fit columns"
+- Charts: "Create bar chart of sales", "Pie chart of department distribution"
+- Import/Export: "Export as CSV", "Import JSON data"
+- Formulas: "Apply SUM formula", "Add IF formula for pass/fail"
+- Sheet management: "Copy sheet", "Freeze header row", "Protect sheet"
 
-You understand 106+ Excel formulas including SUM, AVERAGE, VLOOKUP, IF, CONCATENATE, DATE functions, financial functions (PMT, NPV, IRR), and more. All formulas are written directly into Excel cells.
-
-Be friendly, concise, and helpful. Understand user intent naturally and suggest the most efficient approach."""
+Be friendly, concise, and helpful. Understand user intent naturally."""
 
         if session_summary:
-            base_prompt += f"\n\nPREVIOUS SESSION CONTEXT:\n{session_summary}"
+            base += f"\n\nPREVIOUS SESSION CONTEXT:\n{session_summary}"
+        return base
 
-        return base_prompt
-    
+    # ════════════════════════════════════════════════════════════════
+    # PLANNING PROMPT — The core intelligence for tool selection
+    # ════════════════════════════════════════════════════════════════
+
     def _build_planning_prompt(self, user_intent: str, context: Dict) -> str:
-        """Build comprehensive planning prompt with all 74 tools and 106+ formulas"""
-
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Get actual column headers from context
         column_headers = context.get('column_headers', [])
-        column_headers_str = ', '.join(column_headers) if column_headers else 'Not available (read data first)'
+        col_str = ', '.join(column_headers) if column_headers else 'Not available'
 
-        # Try to identify subject columns for examples
-        subject_columns = []
+        # Detect subject columns for examples
+        subject_cols = []
         for col in column_headers:
-            col_lower = col.lower()
-            if any(subj in col_lower for subj in ['math', 'physics', 'chemistry', 'english', 'science', 'marks', 'score']):
-                subject_columns.append(col)
+            cl = col.lower()
+            if any(s in cl for s in ['math', 'physics', 'chemistry', 'english', 'science', 'marks', 'score']):
+                subject_cols.append(col)
+        if not subject_cols and len(column_headers) > 2:
+            subject_cols = column_headers[2:min(5, len(column_headers))]
+        subj_str = json.dumps(subject_cols) if subject_cols else '["Col1", "Col2", "Col3"]'
 
-        if not subject_columns and len(column_headers) > 2:
-            subject_columns = column_headers[2:min(5, len(column_headers))]
+        file_id = context.get('file_id', 'NOT_PROVIDED')
+        sheet_name = context.get('sheet_name', 'Sheet1')
 
-        subject_columns_str = json.dumps(subject_columns) if subject_columns else '["Subject1", "Subject2", "Subject3"]'
+        prompt = f"""You are WorkflowGenie, an expert Excel automation planner. Convert the user's natural language request into a precise step-by-step execution plan.
 
-        prompt = f"""You are Excelerate, an advanced Excel automation planner with 74 MCP tools and 106+ formula support. You handle student management, business operations, data analysis, charting, formatting, and all Excel tasks.
-
-Analyze the user's intent and generate a precise step-by-step execution plan using the available tools.
-
-═══════════════════════════════════════════════════════════════════════════════
-CURRENT CONTEXT
-═══════════════════════════════════════════════════════════════════════════════
-
+═══ CONTEXT ═══
 Date/Time: {current_time}
-File ID: {context.get('file_id', 'Not provided')}
-Sheet Name: {context.get('sheet_name', 'Not provided')}
-
-*** ACTUAL COLUMN HEADERS IN THIS FILE: {column_headers_str} ***
-(Use ONLY these exact column names in your parameters!)
-
+File ID: {file_id}
+Sheet Name: {sheet_name}
+Column Headers: {col_str}
 Session Summary: {context.get('session_summary', 'New session')}
+Recent Operations: {json.dumps(context.get('recent_operations', []), indent=2)}
+Available Files: {json.dumps(context.get('available_files', []), indent=2)}
 
-Recent Operations:
-{json.dumps(context.get('recent_operations', []), indent=2)}
-
-Available Files:
-{json.dumps(context.get('available_files', []), indent=2)}
-
-═══════════════════════════════════════════════════════════════════════════════
-USER REQUEST
-═══════════════════════════════════════════════════════════════════════════════
-
+═══ USER REQUEST ═══
 {user_intent}
 
-═══════════════════════════════════════════════════════════════════════════════
-ALL 74 AVAILABLE MCP TOOLS
-═══════════════════════════════════════════════════════════════════════════════
+═══ ALL 90 TOOLS (grouped by category) ═══
+
+── BASIC (1-9) ──
+1. create_workbook(filename, sheets?) — Create new Excel file
+2. csv_to_excel(csv_file, target_sheet, file_id?, start_cell?) — Import CSV
+3. write_range(file_id, sheet_name, start_cell, data) — Write 2D data array
+4. update_cell(file_id, sheet_name, cell_address, value) — Update single cell
+5. apply_formula(file_id, sheet_name, cell_address, formula) — Write formula (106+ supported, must start with =)
+6. read_range(file_id, sheet_name, range_notation) — Read data from range
+7. get_file_metadata(file_id) — File info, sheets, dimensions
+8. update_by_search(file_id, sheet_name, search_column, search_value, update_column, new_value) — Search & update
+9. smart_update(file_id, sheet_name, person_name, field_name, new_value) — Auto-detect name column & update
+
+── DATA (10-22) ──
+10. read_data(file_id, sheet_name, max_rows?) — Read all data
+11. add_row(file_id, sheet_name, data) — Append row
+12. delete_row(file_id, sheet_name, person_name) — Delete row by name
+13. bulk_update(file_id, sheet_name, filter_column, filter_value, update_column, operation, value) — Update WITH filter
+14. filter_data(file_id, sheet_name, column, operator, value) — Filter rows (<, >, =, contains)
+15. calculate_aggregate(file_id, sheet_name, column, operation, group_by?) — sum/avg/count/min/max
+16. sort_data(file_id, sheet_name, sort_by, ascending?) — Sort by column
+17. bulk_update_all(file_id, sheet_name, update_column, operation, value) — Update ALL rows (add/multiply/subtract/divide/set)
+18. calculate_column(file_id, sheet_name, target_column, operation, source_columns) — New column from others (SUM/AVERAGE/MIN/MAX)
+19. assign_grades(file_id, sheet_name, score_column, grade_column, grade_rules) — Letter grades
+20. fill_column(file_id, sheet_name, column_name, fill_type, min_value?, max_value?, fixed_value?) — Fill column (random/fixed/sequence)
+21. find_replace(file_id, sheet_name, find_value, replace_value, column?, match_case?, first_only?) — Find & replace first
+22. bulk_find_replace(file_id, sheet_name, find_value, replace_value, column?, match_case?) — Find & replace ALL
+
+── DATA MANIPULATION (23-31) ──
+23. pivot_table(file_id, sheet_name, rows, columns?, values?, aggfunc?) — Pivot (sum/mean/count/min/max)
+24. vlookup(file_id, sheet_name, lookup_value, lookup_col, return_col) — VLOOKUP
+25. hlookup(file_id, sheet_name, lookup_value, lookup_row, return_row) — HLOOKUP
+26. remove_duplicates(file_id, sheet_name, columns?) — Remove duplicate rows
+27. transpose_data(file_id, sheet_name, source_range, target_cell) — Transpose
+28. split_column(file_id, sheet_name, column, delimiter, new_column_names) — Split text column
+29. merge_columns(file_id, sheet_name, columns, separator?, new_column_name?) — Merge columns
+30. fill_down(file_id, sheet_name, range_notation) — Fill empty cells with value above
+31. auto_detect_headers(file_id, sheet_name) — Detect header row
+
+── STATISTICAL (32-36) ──
+32. descriptive_stats(file_id, sheet_name, columns) — Mean, median, mode, stdev, etc.
+33. conditional_aggregate(file_id, sheet_name, group_col, value_col, aggfunc?, condition?) — SUMIF/COUNTIF/AVERAGEIF
+34. write_correlation_summary(file_id, source_sheet, columns, target_sheet?) — Compute correlation AND write results to target_sheet (default "Analysis"). Use this whenever user asks to write/save/output a correlation summary. DO NOT use correlation_matrix + write_range separately.
+35. frequency_distribution(file_id, sheet_name, column, bins?) — Histogram data
+36. percentile_rank(file_id, sheet_name, column, value) — Percentile of value
+
+── FORMATTING (37-44) ──
+37. conditional_formatting(file_id, sheet_name, range_notation, rule_type, params) — rule_type MUST be one of: 'cell_is', 'color_scale', 'data_bar', 'icon_set'. For cell_is: params={{"operator":"greaterThan"|"lessThan"|"between"|"equal","value":"80","fill_color":"00FF00"}}. For multiple threshold rules (e.g. green/yellow/red), generate SEPARATE conditional_formatting steps each with rule_type="cell_is". For color_scale: params={{"start_color":"FF0000","mid_color":"FFFF00","end_color":"00FF00"}}. All color values must be 6-char hex strings WITHOUT the # prefix.
+38. auto_fit_columns(file_id, sheet_name) — Auto-adjust column widths
+39. set_cell_style(file_id, sheet_name, range_notation, font?, fill?, border?, alignment?) — Style cells
+40. freeze_panes(file_id, sheet_name, cell) — Freeze rows/columns
+41. add_data_validation(file_id, sheet_name, range_notation, validation_type, params) — Dropdowns, ranges
+42. protect_sheet(file_id, sheet_name, password?) — Sheet protection
+43. set_print_area(file_id, sheet_name, range_notation) — Print area
+44. add_header_footer(file_id, sheet_name, header?, footer?) — Page headers/footers
+
+── IMPORT/EXPORT (45-49) ──
+45. json_to_excel(file_id, json_content, sheet_name) — Import JSON
+46. export_sheet_as_csv(file_id, sheet_name) — Export CSV
+47. export_sheet_as_json(file_id, sheet_name) — Export JSON
+48. copy_sheet(file_id, source_sheet, target_name) — Duplicate an EXISTING sheet (only when the user explicitly asks to copy/clone a sheet — do NOT use this to add a new blank sheet)
+49. move_sheet(file_id, sheet_name, position) — Reorder sheet
+
+── ADVANCED (50-54) ──
+50. create_named_range(file_id, sheet_name, name, range_notation) — Named range
+51. add_comment(file_id, sheet_name, cell_address, comment, author?) — Cell comment
+52. batch_update(file_id, sheet_name, updates) — Multiple cell updates [{{"cell":"A1","value":100}}]
+53. search_cells(file_id, sheet_name, query, match_type?) — Search (contains/exact/starts_with/ends_with)
+54. get_cell_history(file_id, sheet_name, cell_address) — Cell info
+
+── IMAGES ──
+insert_image(file_id, sheet_name, image_url, anchor_cell?, width_pixels?, height_pixels?) — Download image from URL and insert it into the sheet at anchor_cell (e.g. "F2"). Use when user provides an image URL and wants it placed in the spreadsheet.
+
+── CHARTS (55-63) ──
+55. create_bar_chart(file_id, sheet_name, data_range, title?, position?, width_cm?, height_cm?) — Bar/column chart. data_range MUST be a full cell range like "A1:B11" (categories col A, values col B). NEVER use column letters alone. position = top-left anchor cell e.g. "F2". width_cm/height_cm control size in cm (default ~15x10). When user says "place at F2" or "between F2 and M20", set position="F2" and estimate width_cm/height_cm to fit.
+56. create_line_chart(file_id, sheet_name, data_range, title?, position?, width_cm?, height_cm?) — Line chart. data_range MUST be a full cell range like "A1:C11". Good for trends over time.
+57. create_pie_chart(file_id, sheet_name, data_range, title?, position?, width_cm?, height_cm?) — Pie chart. data_range MUST be a full cell range like "A1:B11".
+58. create_scatter_plot(file_id, sheet_name, x_range, y_range, title?, position?) — Scatter plot. x_range and y_range must be full ranges.
+59. create_area_chart(file_id, sheet_name, data_range, title?, position?) — Area chart. Good for volume trends, cumulative values. Same range format as line chart.
+60. create_radar_chart(file_id, sheet_name, data_range, title?, position?) — Radar/spider chart. Best for multi-dimensional KPI or performance comparisons.
+61. create_bubble_chart(file_id, sheet_name, x_range, y_range, size_range, title?, position?) — Bubble chart. Three data dimensions: position X, position Y, bubble size. All ranges must be full cell ranges.
+62. create_combo_chart(file_id, sheet_name, bar_data_range, line_data_range, title?, position?) — Combo bar+line chart with dual Y axes. Use for e.g. Revenue (bars) + Growth% (line). bar_data_range includes cat col A + value cols; line_data_range is the secondary metric columns.
+63. create_histogram(file_id, sheet_name, data_range, bins?, title?, position?) — Histogram from raw numeric data. Automatically computes bins and frequencies. data_range is a single column of numbers. bins defaults to 10.
+
+── DATA ENGINEERING (59-66) ──
+59. join_sheets(file_id, left_sheet, right_sheet, left_key, right_key?, join_type?, target_sheet?)
+60. append_sheets(file_id, source_sheets, target_sheet?, deduplicate?)
+61. unpivot_columns(file_id, sheet_name, id_columns?, value_columns?, variable_column?, value_column?, target_sheet?)
+62. create_excel_table(file_id, sheet_name, range_notation, table_name?, style_name?)
+63. fill_formula_down(file_id, sheet_name, start_cell, end_row?)
+64. set_number_format(file_id, sheet_name, range_notation, number_format)
+65. standardize_dates(file_id, sheet_name, column, output_format?, target_column?, day_first?)
+66. validate_schema(file_id, sheet_name, required_columns, column_types?, allow_extra_columns?)
+
+── STRUCTURE & CLEANING (67-74) ──
+67. insert_rows(file_id, sheet_name, row_index, amount?) — Insert blank rows
+68. delete_rows_by_index(file_id, sheet_name, row_index, amount?) — Delete rows by index
+69. insert_columns(file_id, sheet_name, column, amount?) — Insert blank columns
+70. delete_columns(file_id, sheet_name, columns) — Delete columns by name
+71. rename_columns(file_id, sheet_name, rename_map, case_sensitive?) — Rename headers
+72. fill_missing_values(file_id, sheet_name, column, strategy?, value?, target_column?) — Fill blanks (constant/mean/median/mode/forward-fill)
+73. standardize_text_case(file_id, sheet_name, column, case_style?, target_column?) — upper/lower/title case
+74. trim_whitespace(file_id, sheet_name, column, target_column?, collapse_internal_spaces?)
+
+── FINANCIAL FORMATTING & CREATION (75-76) ──
+75. format_financial_sheet(file_id, sheet_name, title?, subtitle?) — Apply professional financial report styling (navy title bar, blue section headers, light-blue subtotals, green net totals) to ANY existing sheet. Reads current label/value data dynamically — no hardcoded values. Use this whenever the user asks to "make it look professional", "format the P&L", "style the cashflow", "presentable financial report", "apply financial formatting", etc.
+76. create_professional_document(file_id, doc_type, sheet_name?, params?, source_sheet?) — Create a fully styled professional document on a new sheet.
+  • doc_type: "pnl" | "cashflow" | "balance_sheet" | "budget" | "sales_report" | "payroll" | "kpi" | "invoice" | "inventory" | "attendance" | "pipeline" | "project_tracker"
+  • params: optional dict of values — {{"revenue":500000,"period":"2024","title":"...","employees":[...],"categories":[...]}}
+  • source_sheet: if the user says "based on Sheet1" or "from the data in [sheet]", pass that sheet name here — values are extracted automatically
+  • If neither params nor source_sheet provided → realistic random values are auto-generated
+  SCENARIO GUIDE:
+  A) "Create a P&L"                    → one step: create_professional_document(file_id, "pnl")
+  B) "Create P&L with revenue 500K"    → one step: create_professional_document(file_id, "pnl", params={{"revenue":500000}})
+  C) "Create P&L from Sheet1 data"     → one step: create_professional_document(file_id, "pnl", source_sheet="Sheet1")
+  D) "Create P&L and Cashflow"         → TWO steps: one for "pnl", one for "cashflow"
+  E) "Create P&L, Cashflow and Balance Sheet with revenue 800K" → THREE steps, each with params={{"revenue":800000}}
+  F) "Create all financial reports from Sheet1" → THREE steps (pnl, cashflow, balance_sheet), each with source_sheet="Sheet1"
+  RULE: for EVERY report type mentioned, generate ONE separate create_professional_document step. Never merge multiple doc_types into one step.
+
+── DATE INTELLIGENCE & ANALYTICS (82-83) ──
+82. date_filter_analysis(file_id, sheet_name, date_column, period, value_columns?, aggfunc?, output_sheet?) — Filter rows by date window and aggregate.
+  • period: "MTD" | "YTD" | "QTD" | "Q1"–"Q4" | "last_30_days" | "last_3_months" (any N)
+  • aggfunc: "sum" (default) | "avg" | "count" | "min" | "max"
+  • output_sheet: if provided, writes a styled summary table to that sheet
+  • Use when user says "this month's sales", "YTD revenue", "Q2 performance", "last 90 days", etc.
+83. compare_periods(file_id, sheet_name, date_column, value_column, period_type?, aggfunc?, output_sheet?) — Build period-over-period comparison with growth %.
+  • period_type: "month" (default) | "quarter" | "year" | "week"
+  • Creates styled table with period, aggregate value, count, and growth % (green/red colored)
+  • Use when user says "month by month", "quarter comparison", "year over year", "QoQ", "MoM", "YoY"
+
+── FORECASTING & WHAT-IF (84-86) ──
+84. create_waterfall_chart(file_id, sheet_name, labels_range, values_range, title?, position?) — Waterfall chart. Positives=green bars, negatives=red bars. labels_range and values_range must be full cell ranges (e.g. "A2:A8", "B2:B8").
+85. forecast_trendline(file_id, sheet_name, value_column, periods?, label_column?, method?) — Extend a numeric series with N forecast values using OLS linear regression. Appends forecast rows (styled blue/italic) after existing data. Returns slope, intercept, R², and forecast values.
+  • periods: number of future periods to forecast (default 3)
+  • label_column: if provided, auto-generates next labels (months/quarters/years/integers)
+  • Use when user says "forecast", "predict next N months", "extrapolate", "project trend", "trendline"
+86. what_if_sensitivity(file_id, variable1_name?, variable1_values?, variable2_name?, variable2_values?, formula?, output_sheet?) — Create a 2D color-coded sensitivity/what-if table.
+  • formula: "profit" (v1-v2) | "margin" ((v1-v2)/v1*100) | "roi" ((v1-v2)/v2*100) | "revenue_net" (v1*(1-v2/100)) | "break_even" (v1/v2)
+  • variable1_values / variable2_values: lists of numbers (auto-generated if omitted based on name hints)
+  • Output: color-gradient matrix (green=best, red=worst). Best and worst cells are bolded.
+  • Use when user says "sensitivity analysis", "what if revenue changes", "scenario table", "how does profit change if cost varies", "best/worst case matrix"
+
+── GROUPING / RUNNING TOTALS / CROSS-SHEET / FORMULA CF (87-90) ──
+87. group_rows(file_id, sheet_name, start_row, end_row, outline_level?, collapsed?) — Group rows into a collapsible Excel outline. outline_level 1-8 (default 1). collapsed=true hides rows immediately. Use when user says "group rows", "collapse rows", "outline", "drill-down", "hide detail rows", "expandable rows".
+88. add_running_totals(file_id, sheet_name, value_column, output_column?, label?, start_row?) — Add a cumulative running-total column. Writes the progressive sum next to the value column (blue-tinted cells). Use for "running total", "cumulative sum", "YTD running", "progressive total", "cumulative revenue".
+89. cross_sheet_formula(file_id, target_sheet, target_cell, source_sheet, source_range, formula_type?) — Write a formula in target_sheet that reads from source_sheet.
+  • formula_type: "sum" (default) | "average" | "count" | "min" | "max" | "link" (direct ref) | "stdev" | any Excel function name
+  • Example: cross_sheet_formula(..., target_cell="B2", source_sheet="Sales", source_range="C2:C100", formula_type="sum") → writes =SUM(Sales!C2:C100)
+  • Use when: "pull data from Sheet1", "reference another sheet", "total from Sales sheet", "link cells between sheets", "consolidate sheets"
+90. formula_conditional_formatting(file_id, sheet_name, range_notation, formula, fill_color?, font_color?, bold?) — Highlight cells based on an Excel formula (most powerful CF type).
+  • formula: an Excel formula string that evaluates to TRUE/FALSE for each cell, e.g. '=$C1="Done"' or '=B1>AVERAGE($B:$B)' or '=AND($A1="Active",$B1>100)'
+  • fill_color: 6-char hex or name (red/green/yellow/orange/blue/lightgreen/grey). Default "FFFF00" (yellow)
+  • IMPORTANT: The formula must use absolute column references ($A1 not A1) to apply row-by-row correctly
+  • Use when: "highlight rows where status is Done", "color rows where value exceeds average", "mark overdue items", "highlight entire row based on condition"
+
+═══ FORMULA ENGINE (via apply_formula, tool #5) ═══
+106+ formulas: SUM, AVERAGE, COUNT, IF, VLOOKUP, CONCATENATE, PMT, NPV, IRR, INDEX, MATCH, etc.
+All must start with "=". Example: apply_formula(file_id, sheet_name, "E2", "=SUM(B2:D2)")
+
+═══ DECISION RULES ═══
+
+1. bulk_update (WITH filter) vs bulk_update_all (ALL rows, no filter)
+2. fill_column: fill_type = "random" | "fixed" | "sequence". For random between X and Y: fill_type="random", min_value=X, max_value=Y
+3. find_replace (first match) vs bulk_find_replace (ALL matches) — keywords "all"/"every" → bulk
+4. calculate_column for new computed columns (SUM/AVERAGE/MIN/MAX of source_columns)
+5. assign_grades: parse rules like "90+ A+" into {{"A+": {{"min": 90}}}}
+6. descriptive_stats for "show statistics"
+7. conditional_aggregate for SUMIF/COUNTIF/AVERAGEIF
+8. apply_formula for any Excel formula written to a specific cell
+9. Use EXACT column names from context: {col_str}
+10. For calculate_column source_columns use: {subj_str}
+11. Always include file_id="{file_id}" and sheet_name="{sheet_name}" in every step
+12. Break complex multi-part requests into sequential steps
+13. For multi-row formula application, generate multiple apply_formula steps OR use fill_formula_down
+14. To CREATE a NEW sheet (P&L, Cashflow, Summary, etc.): use write_range with the NEW sheet name — write_range auto-creates the sheet if it doesn't exist. NEVER use copy_sheet for this; copy_sheet only duplicates an existing sheet.
+15. For P&L / cashflow / financial statements: use write_range to write a 2D array like [{{"A1": "Revenue"}}, ...] to a new sheet. Labels go in column A, values/formulas in column B.
+16. conditional_formatting for multiple threshold rules (e.g. green/yellow/red): generate one step per rule, each with rule_type="cell_is" and the appropriate operator/value/fill_color.
+17. format_financial_sheet: use whenever the user asks to "make professional/presentable/board-ready/executive", "style/format the P&L/cashflow", "clean up the report", "prepare for presentation", "apply financial styling" — pass only file_id and sheet_name.
+18. create_professional_document: trigger on "create P&L/cashflow/balance sheet/payroll/budget/sales report/KPI/invoice/inventory/attendance/pipeline/project tracker/project plan". Rules:
+    • No values given → call with just file_id + doc_type (random realistic data generated)
+    • Values given (revenue, employees, items, tasks etc.) → put in params dict
+    • "Based on Sheet1 / from my data" → use source_sheet="Sheet1" (no need to read first)
+    • doc_type mapping: "invoice"→"invoice", "inventory"/"stock tracker"→"inventory", "attendance"/"timesheet"→"attendance", "pipeline"/"sales pipeline"/"deal tracker"→"pipeline", "project"/"project plan"/"task list"/"Gantt"→"project_tracker"
+    • Multiple report types → one step PER type (generate multiple steps in the plan)
+    • Shared values across multiple reports → pass same params to each step
+19. Time-windowed queries ("last month", "Q3 spending", "this year revenue", "MTD", "YTD", "last 30 days"): use date_filter_analysis (tool #82) — it handles MTD/YTD/QTD/Q1-Q4/last_N_days/last_N_months automatically and returns aggregated results. Only fall back to filter_data + calculate_aggregate if the period format is not one of those standard windows (e.g. custom date range like "from March 1 to May 15").
+20. Top-N / best/worst queries ("top 5 products", "bottom 3 employees", "highest revenue month"): use sort_data (ascending=false for top, true for bottom) — tell the user to read the first N rows. No separate top-N tool exists.
+21. Trend queries ("show trends", "revenue over time", "growth chart"): use create_line_chart with the time/date column on axis A and metric column on axis B. Default to time series.
+22. Vague improvement queries ("make it look better", "clean up", "improve"): run auto_fit_columns + trim_whitespace + remove_duplicates + fill_missing_values in sequence.
+23. Informal numbers in queries ("1.2 million", "500K", "two thousand"): convert to integer before putting in params. "1.2 million" → 1200000, "500K" → 500000.
+24. Context follow-ups ("same but for Q2", "do it for expenses too", "now do cashflow"): infer the doc_type and values from recent_operations in the context, update only the changed parameter (e.g. sheet_name or period), repeat the appropriate tool call.
+25. "Analyze my data" / "make sense of this" (completely vague): default to descriptive_stats on all numeric columns, then offer a line chart of the first date+numeric pair.
+26. Chart type selection guide — pick the right chart based on keywords:
+    • "trend / over time / month by month / quarterly / weekly" → create_line_chart
+    • "compare / comparison / bar / category vs category" → create_bar_chart
+    • "share / proportion / percentage of total / breakdown" → create_pie_chart
+    • "relationship / correlation / x vs y / scatter" → create_scatter_plot
+    • "area / cumulative / stacked area" → create_area_chart
+    • "radar / spider / performance across dimensions" → create_radar_chart
+    • "bubble / three variables / size matters" → create_bubble_chart
+    • "combo / dual axis / bars and lines together" → create_combo_chart
+    • "distribution / histogram / frequency / how often" → create_histogram
+27. New document type routing — map user intent to doc_type for create_professional_document:
+    • "project plan / project tracker / task list / Gantt-like / milestone" → doc_type="project_tracker"
+    • "invoice / bill / receipt / client billing" → doc_type="invoice"
+    • "inventory / stock / warehouse / item levels / reorder" → doc_type="inventory"
+    • "attendance / timesheet / presence / absence / leave" → doc_type="attendance"
+    • "pipeline / deals / CRM / sales funnel / opportunities" → doc_type="pipeline"
+    • "payroll / salary / employee pay / compensation" → doc_type="payroll"
+    • "budget / cost plan / expense plan" → doc_type="budget"
+    • "KPI / dashboard / metrics / scorecard" → doc_type="kpi"
+    • "sales report / revenue report / sales summary" → doc_type="sales_report"
+28. When user says "create X and Y reports" (multiple doc types in one request): emit ONE step per doc_type, each targeting a distinct sheet_name (e.g. "PnL", "Cashflow", "BalanceSheet"). Do NOT combine into a single step.
+29. Format financial sheet vs create professional document:
+    • If user says "format / style / beautify this sheet" AND a sheet already exists with data → use format_financial_sheet (tool #75).
+    • If user says "create / generate / make a report" with no existing data → use create_professional_document (tool #76).
+    • If user says "based on data in [sheet]" → use create_professional_document with source_sheet param.
+30. When explicit numeric values are given (e.g. "revenue is $2M, expenses $1.5M"): put them in params dict for create_professional_document. Convert informal numbers first (rule 23).
+31. For queries about time periods ("Q1", "last quarter", "YTD", "this month"): prefer date_filter_analysis (tool #82) over manual filter_data — it handles MTD/YTD/QTD/Q1-Q4/last_N automatically.
+32. Period comparison routing:
+    • "month by month / MoM / monthly trend / how did each month perform" → compare_periods with period_type="month"
+    • "quarter over quarter / QoQ / quarterly comparison" → compare_periods with period_type="quarter"
+    • "year over year / YoY / annual comparison" → compare_periods with period_type="year"
+    • Always pass output_sheet so user gets a styled comparison table.
+33. Forecasting routing:
+    • "forecast / predict / project / extrapolate / next N months" → forecast_trendline
+    • Pass label_column if a date/period label column exists (so labels are auto-generated)
+    • Default periods=3 unless user specifies ("next 6 months" → periods=6)
+    • For visual forecast: follow with create_line_chart covering actuals+forecast range
+34. Waterfall chart routing:
+    • "waterfall / bridge chart / contribution / what drove the change" → create_waterfall_chart
+    • labels_range = column with item names, values_range = column with +/- values
+35. What-if / sensitivity routing:
+    • "sensitivity / what-if / scenario analysis / how does X affect Y / best worst case" → what_if_sensitivity
+    • variable1 = primary driver (revenue/price/units), variable2 = secondary driver (cost/rate/discount)
+    • formula: revenue vs cost → "profit"; revenue vs cost% → "margin"; investment vs cost → "roi"
+    • If user gives explicit ranges ("revenue from 400K to 800K") convert to list of 5 evenly-spaced values
+    • Always pass output_sheet="Sensitivity" (or user-specified name)
+36. Row grouping routing:
+    • "group rows / collapse rows / outline / hide detail / expand-collapse / drill-down rows" → group_rows
+    • start_row and end_row are 1-based Excel row numbers (not data row indices)
+    • outline_level=1 for outermost group, 2 for nested within a level-1 group
+    • collapsed=true if user says "collapse it" / "hide it"; collapsed=false (default) if "group but keep visible"
+37. Running totals routing:
+    • "running total / cumulative sum / progressive total / YTD running / cumulative X" → add_running_totals
+    • value_column = the column with individual amounts; output_column optional (auto-placed if omitted)
+    • Works correctly even if there are gaps (non-numeric rows are skipped automatically)
+38. Cross-sheet formula routing:
+    • "pull from / reference / link / total from / sum from another sheet" → cross_sheet_formula
+    • target_sheet = where result goes, source_sheet = where data lives
+    • formula_type: default "sum"; use "link" for a direct single-cell reference; use "average"/"count"/"min"/"max" as needed
+    • For consolidating multiple sheets: generate ONE cross_sheet_formula step per source sheet
+39. Formula-based conditional formatting routing:
+    • "highlight rows where / color entire row if / mark rows when / highlight based on condition" → formula_conditional_formatting
+    • formula uses $-locked column (e.g. '=$C1=\"Done\"' applies row-by-row across range)
+    • range_notation should cover the full table area (e.g. "A2:Z100" not just one column)
+    • For simple single-column value thresholds: still use regular conditional_formatting (tool #37) with rule_type="cell_is"
+    • For row-level or multi-column conditions: use formula_conditional_formatting (tool #90)
+40. Tool selection fallback order for "make it look better" / "clean up":
+    • Data quality: trim_whitespace → remove_duplicates → fill_missing_values
+    • Visual: auto_fit_columns → conditional_formatting (color scale)
+    • Structure: auto_detect_headers → rename_columns (if names are unclear)
+    • Never use format_financial_sheet for non-financial sheets
+41. "Dashboard" / "executive view" / "summary view" / "management report" ambiguity resolution:
+    • If the sheet has financial labels (revenue/cost/profit/budget) → create_professional_document with doc_type="kpi"
+    • If the sheet has time-series data (dates + numbers) → descriptive_stats + create_line_chart + create_bar_chart (2-step plan)
+    • If no file context at all → create_professional_document with doc_type="kpi" (generates a styled KPI dashboard with realistic data)
+    • "Make a dashboard from my data" → descriptive_stats first, then create_bar_chart of top numeric column
+42. "Organize" / "sort" / "arrange" / "order" ambiguity resolution:
+    • "organize by name / alphabetically / A-Z" → sort_data with sort_by = the text/name column, ascending=true
+    • "organize by value / highest first / largest to smallest / rank" → sort_data with sort_by = the primary numeric column, ascending=false
+    • "organize by date / chronological / oldest first / newest first" → sort_data with sort_by = the date column
+    • If no column specified: use the FIRST numeric column for descending sort (highest value first is the most useful default)
+    • "make it Excel-ready / presentation-ready / board-ready / clean for sharing" → auto_fit_columns + freeze_panes (cell="A2") + set_print_area (full data range)
+
+═══ OUTPUT FORMAT ═══
+
+Output ONLY valid JSON. No markdown fences. No explanation. No extra text.
 
-─── BASIC TOOLS (1-9) ───
-
-1. create_workbook(filename, sheets?) - Create new Excel file
-2. csv_to_excel(csv_file, target_sheet, file_id?, start_cell?) - Import CSV file
-3. write_range(file_id, sheet_name, start_cell, data) - Write 2D data array
-4. update_cell(file_id, sheet_name, cell_address, value) - Update single cell
-5. apply_formula(file_id, sheet_name, cell_address, formula) - Write Excel formula to cell
-   Supports 106+ formulas: SUM, AVERAGE, IF, VLOOKUP, CONCATENATE, PMT, etc.
-6. read_range(file_id, sheet_name, range_notation) - Read data from range
-7. get_file_metadata(file_id) - Get file info, sheets, dimensions
-8. update_by_search(file_id, sheet_name, search_column, search_value, update_column, new_value) - Search column and update
-9. smart_update(file_id, sheet_name, person_name, field_name, new_value) - Auto-detect name column and update
-
-─── DATA TOOLS (10-22) ───
-
-10. read_data(file_id, sheet_name, max_rows?) - Read all data from sheet
-11. add_row(file_id, sheet_name, data) - Append new row
-12. delete_row(file_id, sheet_name, person_name) - Delete row by name
-13. bulk_update(file_id, sheet_name, filter_column, filter_value, update_column, operation, value) - Update matching rows (WITH filter)
-14. filter_data(file_id, sheet_name, column, operator, value) - Filter rows (operators: <, >, =, contains)
-15. calculate_aggregate(file_id, sheet_name, column, operation, group_by?) - Sum/avg/count/min/max with optional grouping
-16. sort_data(file_id, sheet_name, sort_by, ascending?) - Sort sheet by column
-17. bulk_update_all(file_id, sheet_name, update_column, operation, value) - Update ALL rows (no filter)
-    Operations: add, multiply, subtract, divide, set
-18. calculate_column(file_id, sheet_name, target_column, operation, source_columns) - Calculate new column from others
-    Operations: SUM, AVERAGE, MIN, MAX
-19. assign_grades(file_id, sheet_name, score_column, grade_column, grade_rules) - Assign letter grades
-20. fill_column(file_id, sheet_name, column_name, fill_type, min_value?, max_value?, fixed_value?) - Fill column
-    fill_type: "random", "fixed", "sequence"
-21. find_replace(file_id, sheet_name, find_value, replace_value, column?, match_case?, first_only?) - Find & replace (first match)
-22. bulk_find_replace(file_id, sheet_name, find_value, replace_value, column?, match_case?) - Find & replace ALL
-
-─── DATA MANIPULATION (23-31) ───
-
-23. pivot_table(file_id, sheet_name, rows, columns?, values?, aggfunc?) - Create pivot table in new sheet
-    aggfunc: "sum", "mean", "count", "min", "max"
-24. vlookup(file_id, sheet_name, lookup_value, lookup_col, return_col) - VLOOKUP: find value in column, return from another
-25. hlookup(file_id, sheet_name, lookup_value, lookup_row, return_row) - HLOOKUP: find value in row, return from another
-26. remove_duplicates(file_id, sheet_name, columns?) - Remove duplicate rows
-27. transpose_data(file_id, sheet_name, source_range, target_cell) - Transpose rows/columns
-28. split_column(file_id, sheet_name, column, delimiter, new_column_names) - Split text to multiple columns
-29. merge_columns(file_id, sheet_name, columns, separator?, new_column_name?) - Concatenate columns into one
-30. fill_down(file_id, sheet_name, range) - Fill empty cells with value above
-31. auto_detect_headers(file_id, sheet_name) - Detect header row and return column info
-
-─── STATISTICAL/ANALYSIS (32-36) ───
-
-32. descriptive_stats(file_id, sheet_name, columns) - Mean, median, mode, stdev, min, max, count, sum
-33. conditional_aggregate(file_id, sheet_name, group_col, value_col, aggfunc?, condition?) - SUMIF/COUNTIF/AVERAGEIF
-    aggfunc: "sum", "average", "count", "min", "max"
-34. correlation_matrix(file_id, sheet_name, columns) - Correlation between numeric columns
-35. frequency_distribution(file_id, sheet_name, column, bins?) - Histogram/frequency data
-36. percentile_rank(file_id, sheet_name, column, value) - Percentile of a value in column
-
-─── FORMATTING & PRESENTATION (37-44) ───
-
-37. conditional_formatting(file_id, sheet_name, range, rule_type, params) - Color scales, data bars, icon sets
-    rule_type: "cell_is", "color_scale", "data_bar", "icon_set"
-    cell_is params: {{operator, value, fill_color, font_color?}}
-    color_scale params: {{start_color, mid_color?, end_color}}
-    data_bar params: {{color}}
-    icon_set params: {{icon_style}}
-38. auto_fit_columns(file_id, sheet_name) - Auto-adjust all column widths
-39. set_cell_style(file_id, sheet_name, range, font?, fill?, border?, alignment?) - Comprehensive styling
-    font: {{name?, size?, bold?, italic?, color?, underline?}}
-    fill: {{color?, type?}}
-    border: {{style?, color?, left?, right?, top?, bottom?}}
-    alignment: {{horizontal?, vertical?, wrap_text?}}
-40. freeze_panes(file_id, sheet_name, cell) - Freeze rows/columns (e.g., "A2" freezes row 1)
-41. add_data_validation(file_id, sheet_name, range, validation_type, params) - Dropdowns, number ranges
-    validation_type: "list", "whole", "decimal", "text_length", "date"
-    list params: {{items: [...]}}
-    whole/decimal params: {{min, max}}
-42. protect_sheet(file_id, sheet_name, password?) - Sheet protection
-43. set_print_area(file_id, sheet_name, range) - Define print area
-44. add_header_footer(file_id, sheet_name, header?, footer?) - Page headers/footers
-
-─── IMPORT/EXPORT (45-49) ───
-
-45. json_to_excel(file_id, json_content, sheet_name) - Import JSON data (list of objects or lists)
-46. export_sheet_as_csv(file_id, sheet_name) - Export sheet as CSV string
-47. export_sheet_as_json(file_id, sheet_name) - Export sheet as JSON array of objects
-48. copy_sheet(file_id, source_sheet, target_name) - Duplicate a sheet
-49. move_sheet(file_id, sheet_name, position) - Reorder sheet position
-
-─── ADVANCED (50-54) ───
-
-50. create_named_range(file_id, sheet_name, name, range) - Create named range
-51. add_comment(file_id, sheet_name, cell, comment, author?) - Cell comment
-52. batch_update(file_id, sheet_name, updates) - Multiple cell updates: [{{"cell": "A1", "value": 100}}, ...]
-53. search_cells(file_id, sheet_name, query, match_type?) - Search cells
-    match_type: "contains", "exact", "starts_with", "ends_with"
-54. get_cell_history(file_id, sheet_name, cell) - Get cell value, type, formula, comment
-
-─── CHART TOOLS (55-58) ───
-
-55. create_bar_chart(file_id, sheet_name, data_range, title?, position?) - Bar/column chart
-56. create_line_chart(file_id, sheet_name, data_range, title?, position?) - Line chart
-57. create_pie_chart(file_id, sheet_name, data_range, title?, position?) - Pie chart
-58. create_scatter_plot(file_id, sheet_name, x_range, y_range, title?, position?) - Scatter plot
-
-─── DATA ENGINEERING TOOLS (59-66) ───
-
-59. join_sheets(file_id, left_sheet, right_sheet, left_key, right_key?, join_type?, target_sheet?) - Join two sheets (left/right/inner/outer)
-60. append_sheets(file_id, source_sheets, target_sheet?, deduplicate?) - Append multiple sheets into one consolidated sheet
-61. unpivot_columns(file_id, sheet_name, id_columns?, value_columns?, variable_column?, value_column?, target_sheet?) - Convert wide data to long format
-62. create_excel_table(file_id, sheet_name, range_notation, table_name?, style_name?) - Create native Excel table object from range
-63. fill_formula_down(file_id, sheet_name, start_cell, end_row?) - Copy formula down with relative references
-64. set_number_format(file_id, sheet_name, range_notation, number_format) - Apply Excel number/currency/date display formats
-65. standardize_dates(file_id, sheet_name, column, output_format?, target_column?, day_first?) - Normalize mixed date values to a consistent format
-66. validate_schema(file_id, sheet_name, required_columns, column_types?, allow_extra_columns?) - Validate required columns and optional data types
-
-─── STRUCTURE & CLEANING TOOLS (67-74) ───
-
-67. insert_rows(file_id, sheet_name, row_index, amount?) - Insert blank row(s) at a specific index
-68. delete_rows_by_index(file_id, sheet_name, row_index, amount?) - Delete row(s) by row number
-69. insert_columns(file_id, sheet_name, column, amount?) - Insert blank column(s) before an index/letter/header
-70. delete_columns(file_id, sheet_name, columns) - Delete one or more columns by name/letter/index
-71. rename_columns(file_id, sheet_name, rename_map, case_sensitive?) - Rename one or more header columns
-72. fill_missing_values(file_id, sheet_name, column, strategy?, value?, target_column?) - Fill blanks using constant/mean/median/mode/forward-fill
-73. standardize_text_case(file_id, sheet_name, column, case_style?, target_column?) - Convert text to upper/lower/title/sentence case
-74. trim_whitespace(file_id, sheet_name, column, target_column?, collapse_internal_spaces?) - Trim spaces and optionally collapse repeated spaces
-
-═══════════════════════════════════════════════════════════════════════════════
-FORMULA ENGINE - 106+ EXCEL-COMPATIBLE FORMULAS (via apply_formula tool)
-═══════════════════════════════════════════════════════════════════════════════
-
-The apply_formula tool writes native Excel formulas into cells. Use it for any formula
-that should be computed by Excel (not Python). Formulas MUST start with "=".
-
-MATH (28): SUM, AVERAGE, COUNT, COUNTA, COUNTBLANK, MAX, MIN, MEDIAN, MODE,
-  STDEV, VAR, ABS, ROUND, ROUNDUP, ROUNDDOWN, CEILING, FLOOR, MOD, POWER,
-  SQRT, LOG, LN, EXP, PI, RAND, RANDBETWEEN, SUMPRODUCT, SUBTOTAL
-
-LOGICAL (11): IF, AND, OR, NOT, XOR, IFERROR, IFNA, IFS, SWITCH, TRUE, FALSE
-
-TEXT (21): CONCAT, CONCATENATE, LEFT, RIGHT, MID, LEN, TRIM, UPPER, LOWER,
-  PROPER, FIND, SEARCH, REPLACE, SUBSTITUTE, TEXT, VALUE, EXACT, REPT, CHAR, CODE, CLEAN
-
-DATE/TIME (16): NOW, TODAY, DATE, YEAR, MONTH, DAY, HOUR, MINUTE, SECOND,
-  DATEDIF, EDATE, EOMONTH, WEEKDAY, WEEKNUM, NETWORKDAYS, WORKDAY
-
-LOOKUP (10): VLOOKUP, HLOOKUP, INDEX, MATCH, XLOOKUP, OFFSET, INDIRECT, ROW, COLUMN, CHOOSE
-
-STATISTICAL (10): LARGE, SMALL, RANK, PERCENTILE, QUARTILE, CORREL, COVARIANCE,
-  FORECAST, TREND, GROWTH
-
-FINANCIAL (10): PMT, FV, PV, NPV, IRR, RATE, NPER, SLN, DB, DDB
-
-FORMULA EXAMPLES:
-- =SUM(A2:A100)
-- =AVERAGE(B2:B50)
-- =IF(C2>90,"A+",IF(C2>80,"A","B"))
-- =VLOOKUP(A2,Sheet2!A:C,3,FALSE)
-- =CONCATENATE(A2," ",B2)
-- =PMT(0.05/12,360,200000)
-- =IFERROR(A2/B2,"N/A")
-- =TEXT(A2,"MM/DD/YYYY")
-- =COUNTIF(C2:C100,">90")
-- =SUMIF(A2:A100,"Sales",B2:B100)
-- =INDEX(B2:B100,MATCH("John",A2:A100,0))
-
-When users ask for formulas, use apply_formula with the cell address and formula string.
-For applying formulas to multiple rows, generate multiple apply_formula steps OR
-use a single step with a range formula where appropriate.
-
-═══════════════════════════════════════════════════════════════════════════════
-CRITICAL DECISION RULES
-═══════════════════════════════════════════════════════════════════════════════
-
-Rule 1: bulk_update vs bulk_update_all
-- WITH filter condition → bulk_update (e.g., "Update Marketing department")
-- WITHOUT filter / "everyone" / "all" → bulk_update_all (e.g., "Update everyone")
-
-Rule 2: Calculate Operations
-- "calculate total", "sum of marks" → calculate_column with SUM
-- "calculate average" → calculate_column with AVERAGE
-- "find highest" → calculate_aggregate with max
-- "descriptive statistics", "stats" → descriptive_stats
-
-Rule 3: Grade Assignment
-- "assign grades" + conditions → assign_grades
-- Parse: "90+ is A+" → {{"A+": {{"min": 90}}}}
-- Parse: "80-89 is A" → {{"A": {{"min": 80, "max": 89}}}}
-
-Rule 4: Multi-Step Operations
-- Break complex requests into sequential steps
-- Example: "Calculate total and average, assign grades, then sort" = 4 steps
-- Each step should use the file_id and sheet_name from context
-
-Rule 5: Fill Column
-- "fill with random" → fill_column with fill_type="random"
-- "fill with 0" / "set all to X" → fill_column with fill_type="fixed"
-- "fill with sequence" → fill_column with fill_type="sequence"
-
-Rule 6: Find and Replace
-- Single: "change Ali to Taha" → find_replace
-- Bulk: "replace all Ali with Taha" → bulk_find_replace
-- Keywords "all", "every", "each" → bulk_find_replace
-
-Rule 7: Lookup Operations
-- "find X in column A, return column B" → vlookup
-- "look up in row" → hlookup
-- "write a VLOOKUP formula" → apply_formula with =VLOOKUP(...)
-
-Rule 8: Charts
-- Specify data_range as "A1:D10" format (first column = categories, rest = data series)
-- For scatter plots, specify separate x_range and y_range
-- position defaults to "E1" but can be adjusted
-
-Rule 9: Formatting
-- "bold headers" → set_cell_style with font={{"bold": true}}
-- "highlight cells > 90 green" → conditional_formatting with rule_type="cell_is"
-- "auto-fit columns" → auto_fit_columns
-- "freeze header" → freeze_panes with cell="A2"
-
-Rule 10: Formulas
-- "apply SUM formula to cell D2" → apply_formula with formula="=SUM(A2:C2)"
-- "add IF formula for pass/fail" → apply_formula with formula="=IF(D2>=50,\\"Pass\\",\\"Fail\\")"
-- For ranges of formulas, create multiple apply_formula steps
-
-Rule 11: Data Analysis
-- "show statistics" → descriptive_stats
-- "correlation between X and Y" → correlation_matrix
-- "frequency distribution" → frequency_distribution
-- "what percentile is 85?" → percentile_rank
-- "group by department and sum salary" → conditional_aggregate
-
-Rule 12: Import/Export
-- "export as CSV" → export_sheet_as_csv
-- "export as JSON" → export_sheet_as_json
-- "import JSON" → json_to_excel
-
-Rule 13: Sheet Operations
-- "copy this sheet" → copy_sheet
-- "duplicate sheet" → copy_sheet
-- "move sheet to position 0" → move_sheet
-- "freeze first row" → freeze_panes with cell="A2"
-- "protect sheet" → protect_sheet
-
-Rule 14: Data Engineering
-- "join sheet A and B by EmployeeID" → join_sheets
-- "append Jan, Feb, Mar sheets" → append_sheets
-- "convert to long format" / "unpivot" → unpivot_columns
-- "make this range an Excel table" → create_excel_table
-- "fill this formula down" → fill_formula_down
-- "set currency format" / "set percentage format" → set_number_format
-- "normalize all dates to YYYY-MM-DD" → standardize_dates
-- "validate schema" / "check required columns" → validate_schema
-
-Rule 15: Structure and Cleaning
-- "insert 2 rows at row 5" → insert_rows with row_index=5, amount=2
-- "delete rows 10-20" → delete_rows_by_index with row_index=10, amount=11
-- "insert column before Salary" → insert_columns
-- "delete Name and Address columns" → delete_columns
-- "rename Dept to Department" → rename_columns
-- "fill missing salary with mean" → fill_missing_values with strategy="mean"
-- "make names uppercase" / "title case" → standardize_text_case
-- "trim whitespace in Email" → trim_whitespace
-
-═══════════════════════════════════════════════════════════════════════════════
-EXAMPLES FOR NEW TOOLS
-═══════════════════════════════════════════════════════════════════════════════
-
-IMPORTANT: Use ACTUAL column headers: {column_headers_str}
-Subject/Numeric columns: {subject_columns_str}
-
---- Pivot Table ---
-Input: "Create pivot table grouped by Department showing average Salary"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "pivot_table",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "rows": ["Department"],
-        "values": "Salary",
-        "aggfunc": "mean"
-      }},
-      "description": "Create pivot table of average salary by department"
-    }}
-  ]
-}}
-
---- VLOOKUP ---
-Input: "Look up student ID 101 and return their name"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "vlookup",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "lookup_value": "101",
-        "lookup_col": "ID",
-        "return_col": "Name"
-      }},
-      "description": "VLOOKUP student ID 101 to find name"
-    }}
-  ]
-}}
-
---- Remove Duplicates ---
-Input: "Remove duplicate rows"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "remove_duplicates",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}"
-      }},
-      "description": "Remove duplicate rows from sheet"
-    }}
-  ]
-}}
-
---- Descriptive Statistics ---
-Input: "Show statistics for Math and Physics columns"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "descriptive_stats",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "columns": ["Math", "Physics"]
-      }},
-      "description": "Calculate descriptive statistics for Math and Physics"
-    }}
-  ]
-}}
-
---- Conditional Formatting ---
-Input: "Highlight cells above 90 in green in column C"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "conditional_formatting",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "range_notation": "C2:C100",
-        "rule_type": "cell_is",
-        "params": {{
-          "operator": "greaterThan",
-          "value": "90",
-          "fill_color": "00FF00"
-        }}
-      }},
-      "description": "Highlight cells > 90 in green"
-    }}
-  ]
-}}
-
---- Bar Chart ---
-Input: "Create a bar chart of student scores"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "create_bar_chart",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "data_range": "A1:D10",
-        "title": "Student Scores",
-        "position": "F1"
-      }},
-      "description": "Create bar chart of student scores"
-    }}
-  ]
-}}
-
---- Apply Formula ---
-Input: "Add a SUM formula in cell E2 that sums B2 to D2"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "apply_formula",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "cell_address": "E2",
-        "formula": "=SUM(B2:D2)"
-      }},
-      "description": "Apply SUM formula to E2"
-    }}
-  ]
-}}
-
---- Freeze + Auto-fit ---
-Input: "Freeze the header row and auto-fit all columns"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "freeze_panes",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "cell": "A2"
-      }},
-      "description": "Freeze header row"
-    }},
-    {{
-      "step": 2,
-      "tool": "auto_fit_columns",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}"
-      }},
-      "description": "Auto-fit all column widths"
-    }}
-  ]
-}}
-
---- Export as JSON ---
-Input: "Export this sheet as JSON"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "export_sheet_as_json",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}"
-      }},
-      "description": "Export sheet data as JSON"
-    }}
-  ]
-}}
-
---- Data Validation Dropdown ---
-Input: "Add a dropdown with Yes/No/Maybe in column F"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "add_data_validation",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "range_notation": "F2:F100",
-        "validation_type": "list",
-        "params": {{
-          "items": ["Yes", "No", "Maybe"]
-        }}
-      }},
-      "description": "Add Yes/No/Maybe dropdown to column F"
-    }}
-  ]
-}}
-
---- Style Headers ---
-Input: "Make the header row bold with blue background"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "set_cell_style",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "range_notation": "A1:Z1",
-        "font": {{"bold": true, "color": "FFFFFF"}},
-        "fill": {{"color": "4472C4"}}
-      }},
-      "description": "Style header row with bold white text on blue background"
-    }}
-  ]
-}}
-
---- Batch Update ---
-Input: "Update A1 to 100, B1 to 200, C1 to 300"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "batch_update",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "updates": [
-          {{"cell": "A1", "value": 100}},
-          {{"cell": "B1", "value": 200}},
-          {{"cell": "C1", "value": 300}}
-        ]
-      }},
-      "description": "Update multiple cells in batch"
-    }}
-  ]
-}}
-
---- Split Column ---
-Input: "Split the Full Name column by space into First Name and Last Name"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "split_column",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "column": "Full Name",
-        "delimiter": " ",
-        "new_column_names": ["First Name", "Last Name"]
-      }},
-      "description": "Split Full Name into First Name and Last Name"
-    }}
-  ]
-}}
-
---- Merge Columns ---
-Input: "Merge First Name and Last Name into Full Name"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "merge_columns",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "columns": ["First Name", "Last Name"],
-        "separator": " ",
-        "new_column_name": "Full Name"
-      }},
-      "description": "Merge First Name and Last Name into Full Name"
-    }}
-  ]
-}}
-
---- Join Sheets ---
-Input: "Join Employees and Salaries sheets by EmployeeID"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "join_sheets",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "left_sheet": "Employees",
-        "right_sheet": "Salaries",
-        "left_key": "EmployeeID",
-        "join_type": "left",
-        "target_sheet": "JoinedData"
-      }},
-      "description": "Join Employees and Salaries using EmployeeID"
-    }}
-  ]
-}}
-
---- Append Sheets ---
-Input: "Append Jan, Feb, and Mar sheets into one"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "append_sheets",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "source_sheets": ["Jan", "Feb", "Mar"],
-        "target_sheet": "Q1_Combined",
-        "deduplicate": true
-      }},
-      "description": "Append monthly sheets into one consolidated sheet"
-    }}
-  ]
-}}
-
---- Unpivot Columns ---
-Input: "Unpivot Math, Physics, Chemistry into long format"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "unpivot_columns",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "id_columns": ["Student Name"],
-        "value_columns": ["Math", "Physics", "Chemistry"],
-        "variable_column": "Subject",
-        "value_column": "Marks",
-        "target_sheet": "LongFormat"
-      }},
-      "description": "Convert subject columns to long format"
-    }}
-  ]
-}}
-
---- Fill Formula Down ---
-Input: "Fill the formula in E2 down to row 500"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "fill_formula_down",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "start_cell": "E2",
-        "end_row": 500
-      }},
-      "description": "Copy formula in E2 down to row 500"
-    }}
-  ]
-}}
-
---- Standardize Dates ---
-Input: "Normalize JoinDate column to YYYY-MM-DD"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "standardize_dates",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "column": "JoinDate",
-        "output_format": "YYYY-MM-DD"
-      }},
-      "description": "Normalize date values in JoinDate column"
-    }}
-  ]
-}}
-
---- Validate Schema ---
-Input: "Validate that required columns exist and Salary is numeric"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "validate_schema",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "required_columns": ["EmployeeID", "Name", "Salary"],
-        "column_types": {{"Salary": "number"}},
-        "allow_extra_columns": true
-      }},
-      "description": "Validate required columns and Salary type"
-    }}
-  ]
-}}
-
---- Insert Rows ---
-Input: "Insert 3 rows at row 5"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "insert_rows",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "row_index": 5,
-        "amount": 3
-      }},
-      "description": "Insert 3 blank rows at row 5"
-    }}
-  ]
-}}
-
---- Rename Columns ---
-Input: "Rename Dept to Department and EmpID to EmployeeID"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "rename_columns",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "rename_map": {{"Dept": "Department", "EmpID": "EmployeeID"}}
-      }},
-      "description": "Rename headers to standardized names"
-    }}
-  ]
-}}
-
---- Fill Missing Values ---
-Input: "Fill missing Salary values with the mean"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "fill_missing_values",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "column": "Salary",
-        "strategy": "mean"
-      }},
-      "description": "Impute missing Salary values using column mean"
-    }}
-  ]
-}}
-
---- Standardize Text Case ---
-Input: "Convert Name column to title case"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "standardize_text_case",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "column": "Name",
-        "case_style": "title"
-      }},
-      "description": "Convert text in Name column to title case"
-    }}
-  ]
-}}
-
---- Trim Whitespace ---
-Input: "Trim extra spaces in Email"
-{{
-  "steps": [
-    {{
-      "step": 1,
-      "tool": "trim_whitespace",
-      "parameters": {{
-        "file_id": "{context.get('file_id')}",
-        "sheet_name": "{context.get('sheet_name')}",
-        "column": "Email",
-        "collapse_internal_spaces": true
-      }},
-      "description": "Trim and normalize spacing in Email column"
-    }}
-  ]
-}}
-
-═══════════════════════════════════════════════════════════════════════════════
-LEGACY EXAMPLES (Student Management - still fully supported)
-═══════════════════════════════════════════════════════════════════════════════
-
---- Add Bonus Marks ---
-Input: "Add 5 bonus marks to everyone's Math score"
-→ bulk_update_all with operation="add", value=5
-
---- Calculate Total ---
-Input: "Calculate total marks"
-→ calculate_column with operation="SUM", source_columns={subject_columns_str}
-
---- Calculate Average ---
-Input: "Calculate average marks"
-→ calculate_column with operation="AVERAGE", source_columns={subject_columns_str}
-
---- Assign Grades ---
-Input: "Assign grades: 90+ A+, 80-89 A, 70-79 B, 60-69 C, 50-59 D, <50 F"
-→ assign_grades with grade_rules
-
---- Multi-Step: Calculate + Grade ---
-Input: "Calculate total, average, then assign grades"
-→ 3 steps: calculate_column(SUM), calculate_column(AVERAGE), assign_grades
-
---- Filter ---
-Input: "Show students with A+ grade"
-→ filter_data with column="Grade", operator="=", value="A+"
-
---- Sort ---
-Input: "Sort by average descending"
-→ sort_data with sort_by="Average", ascending=false
-
-═══════════════════════════════════════════════════════════════════════════════
-YOUR TASK
-═══════════════════════════════════════════════════════════════════════════════
-
-Based on the user's request, generate a JSON plan.
-
-CRITICAL RULES:
-1. Use ONLY the ACTUAL column names from the file: {column_headers_str}
-2. For calculate_column source_columns, use: {subject_columns_str}
-3. Match column names EXACTLY (case-sensitive)
-4. Always include file_id and sheet_name from context
-5. Break complex requests into multiple sequential steps
-6. Choose the most specific tool for the job
-7. For Excel formulas, use apply_formula with the formula string starting with "="
-
-Output ONLY valid JSON (no markdown, no explanation):
 {{
   "steps": [
     {{
       "step": 1,
       "tool": "tool_name",
-      "parameters": {{}},
+      "parameters": {{
+        "file_id": "{file_id}",
+        "sheet_name": "{sheet_name}",
+        ...
+      }},
       "description": "what this step does"
     }}
   ]
 }}
 """
-
         return prompt
 
-# Create service instance
+
+# Singleton
 llm_service = LLMService()

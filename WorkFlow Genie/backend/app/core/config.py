@@ -3,8 +3,7 @@ Configuration settings for WorkflowGenie
 """
 
 from pydantic_settings import BaseSettings
-from typing import List
-import os
+from typing import List, Optional
 from pathlib import Path
 
 class Settings(BaseSettings):
@@ -20,9 +19,19 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./workflowgenie.db"
     
-    # OpenAI
-    OPENAI_API_KEY: str
-    OPENAI_MODEL: str = "gpt-4-turbo-preview"
+    # LLM Provider — Claude is primary
+    LLM_PROVIDER: str = "claude"
+
+    # OpenAI (kept as fallback — uncomment in llm_service if needed)
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_MODEL: str = "gpt-4o"
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+
+    # Claude (Anthropic) — Primary provider
+    ANTHROPIC_API_KEY: Optional[str] = None
+    CLAUDE_MODEL: str = "claude-sonnet-4-20250514"  # default
+    CLAUDE_MODEL_SONNET: str = "claude-sonnet-4-20250514"
+    CLAUDE_MODEL_OPUS: str = "claude-opus-4-20250514"
     
     # CORS
     CORS_ORIGINS: List[str] = ["*"]
@@ -30,7 +39,7 @@ class Settings(BaseSettings):
     # File Storage
     DATA_DIR: Path = Path("./data")
     EXCEL_DIR: Path = Path("./data/excel_files")
-    
+
     # Logging
     LOG_LEVEL: str = "INFO"
     

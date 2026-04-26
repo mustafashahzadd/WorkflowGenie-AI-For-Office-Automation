@@ -28,9 +28,7 @@ class MessageRequest(BaseModel):
     """Request model for sending a message"""
     session_id: Optional[str] = Field(None, description="Session ID for conversation continuity. If not provided, a new session will be created.")
     message: str = Field(..., description="User's message in natural language", example="Update John Smith's salary to 62000")
-    file_id: Optional[str] = Field(None, description="Excel file ID to operate on (UUID format)", example="3cf05b87-ce48-4dd7-b463-547d911ffb")
-    sheet_name: str = Field(default="HR", description="Sheet name within the Excel file", example="HR")
-    provider: Optional[str] = Field(None, description="LLM provider override: openai or claude", example="claude")
+    file_id: Optional[str] = Field(None, description="Excel file ID to operate on. If omitted, auto-fetched from session or inferred from message intent.")
 
 class MessageResponse(BaseModel):
     """Response model for message"""
@@ -159,59 +157,38 @@ async def send_message(
         
         logger.info(f"📚 Loaded {len(conversation_history)} messages from history")
 
-        provider = _resolve_provider(request_data.provider)
+        provider = "claude"
         logger.info(f"🤖 Using provider: {provider}")
-        
+
         # ════════════════════════════════════════════════════════════════
         # STEP 5: DETECT INTENT (Excel Operation or General Chat)
         # ════════════════════════════════════════════════════════════════
-        
+
         is_excel_operation = llm_service.detect_excel_intent(request_data.message, request_data.file_id)
-        
+
         if is_excel_operation:
             logger.info("🔧 Detected Excel operation intent")
-            
+
             # ═══════════════════════════════════════════════════════════
-            # STEP 6: EXTRACT OR VALIDATE FILE_ID
+            # STEP 6: RESOLVE FILE_ID — explicit > session > ask
             # ═══════════════════════════════════════════════════════════
-            
+
             file_id = request_data.file_id
-            
-            # Check if this is a CREATE operation (doesn't need file_id)
             message_lower = request_data.message.lower()
-            is_create_operation = any(kw in message_lower for kw in ['create', 'new file', 'new excel'])
-            
-            # # Try to extract file_id from message if not provided (skip for create operations)
-            # if not file_id and not is_create_operation:
-            #     match = re.search(
-            #         r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
-            #         request_data.message.lower()
-            #     )
-            #     if match:
-            #         file_id = match.group(0)
-            #         logger.info(f"📎 Extracted file_id from message: {file_id}")
-            # Auto-fetch file_id from session
+            is_create_operation = any(kw in message_lower for kw in [
+                'create', 'new file', 'new excel', 'make a new', 'generate a new'
+            ])
+
+            # Auto-fetch from session if not explicitly provided and not a create
             if not file_id and not is_create_operation:
-                  from app.core.models import ExcelFile
-                  excel_file = db.query(ExcelFile).filter(
-                     ExcelFile.session_id == chat_session.id
-                 ).first()
-    
-                  if excel_file:
-                      file_id = excel_file.id
-                      logger.info(f"📎 Auto-fetched file_id from session: {file_id}")
-            
-            # If still no file_id, check if there's a default from session
-            if not file_id and chat_session.summary:
-                # Try to extract file_id from session summary
-                match = re.search(
-                    r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
-                    chat_session.summary
-                )
-                if match:
-                    file_id = match.group(0)
-                    logger.info(f"📎 Using file_id from session context: {file_id}")
-            
+                from app.core.models import ExcelFile
+                excel_file = db.query(ExcelFile).filter(
+                    ExcelFile.session_id == chat_session.id
+                ).first()
+                if excel_file:
+                    file_id = excel_file.id
+                    logger.info(f"📎 Auto-fetched file_id from session: {file_id}")
+
             # If STILL no file_id AND not a create operation, ask user
             if not file_id and not is_create_operation:
                 response_text = """I'd love to help with that Excel operation! However, I need to know which file to work with.
@@ -246,7 +223,6 @@ Which would you prefer?"""
                 session_id=chat_session.id,
                 user_message=request_data.message,
                 file_id=file_id,
-                sheet_name=request_data.sheet_name,
                 provider=provider,
                 conversation_history=conversation_history,
                 session_summary=chat_session.summary,
@@ -364,8 +340,7 @@ async def get_history(session_id: str, db: Session = Depends(get_db)):
 async def _handle_excel_operation(
     session_id: str,
     user_message: str,
-    file_id: str,
-    sheet_name: str,
+    file_id: Optional[str],
     provider: str,
     conversation_history: List[Dict],
     session_summary: Optional[str],
@@ -415,7 +390,7 @@ async def _handle_excel_operation(
         column_headers = []
         if file_id:
             try:
-                column_headers = await tool_service.get_column_headers(file_id, sheet_name)
+                column_headers = await tool_service.get_column_headers(file_id, "Sheet1")
                 logger.info(f"📊 Column headers: {column_headers}")
             except Exception as e:
                 logger.warning(f"Could not get column headers: {e}")
@@ -440,7 +415,6 @@ async def _handle_excel_operation(
             user_intent=user_message,
             context={
                 "file_id": file_id,
-                "sheet_name": sheet_name,
                 "session_summary": session_summary,
                 "available_files": available_files,
                 "recent_operations": recent_operations,
@@ -456,8 +430,13 @@ async def _handle_excel_operation(
         # ═══════════════════════════════════════════════════════════════
         
         operation_results = []
-        
+        dynamic_file_id = file_id  # updated when create_workbook runs
+
         for step in plan["steps"]:
+            # Always inject the current real file_id into every non-create step
+            if dynamic_file_id and step["tool"] != "create_workbook":
+                step.setdefault("parameters", {})["file_id"] = dynamic_file_id
+
             logger.info(f"⚙️ Executing step {step['step']}: {step['tool']}")
             
             # Broadcast step start
@@ -495,6 +474,13 @@ async def _handle_excel_operation(
                 operation.error_message = result.get("error")
                 db.commit()
                 
+                # If this step created a workbook, capture the real file_id for subsequent steps
+                if result["success"] and step["tool"] == "create_workbook":
+                    new_fid = (result.get("data") or {}).get("file_id")
+                    if new_fid:
+                        dynamic_file_id = new_fid
+                        logger.info(f"📁 Captured new file_id for subsequent steps: {new_fid}")
+
                 # Store result
                 operation_results.append({
                     "step": step["step"],
@@ -574,8 +560,7 @@ async def _handle_excel_operation(
             content=response_text,
             meta_data=json.dumps({
                 "operations": operation_results,
-                "file_id": file_id,
-                "sheet_name": sheet_name,
+                "file_id": dynamic_file_id,
                 "provider": provider
             })
         )
@@ -618,8 +603,7 @@ async def _handle_excel_operation(
             response=response_text,
             operations=operation_results,
             context={
-                "file_id": file_id,
-                "sheet_name": sheet_name,
+                "file_id": dynamic_file_id,
                 "provider": provider,
                 "total_operations": len(operation_results),
                 "successful": len([op for op in operation_results if op["status"] == "completed"])
@@ -665,10 +649,3 @@ def _is_forget_command(message: str) -> bool:
     return any(pattern in message_lower for pattern in forget_patterns)
 
 
-def _resolve_provider(provider: Optional[str]) -> str:
-    """Resolve provider from request override or app default."""
-
-    resolved_provider = (provider or settings.LLM_PROVIDER or "openai").strip().lower()
-    if resolved_provider not in {"openai", "claude"}:
-        raise HTTPException(status_code=400, detail="Invalid provider. Use 'openai' or 'claude'.")
-    return resolved_provider
