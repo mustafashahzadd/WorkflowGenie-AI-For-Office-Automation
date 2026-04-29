@@ -4,7 +4,7 @@
  * Features real-time operation display, chat-like interaction, and smooth animations
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSpreadsheetStore } from '../../stores/spreadsheetStore';
 import {
@@ -26,7 +26,9 @@ import {
   Info,
   SlidersHorizontal,
   Plus,
-  Minus
+  Minus,
+  Mic,
+  MicOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -382,8 +384,31 @@ export const AIPromptInterface: React.FC<AIPromptInterfaceProps> = ({ className 
   const [provider, setProvider] = useState<'openai' | 'claude' | null>(null);
   const [useRag, setUseRag] = useState<boolean | null>(null);
   const [ragTopK, setRagTopK] = useState(4);
+  const [isListening, setIsListening] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
+
+  const toggleSpeech = useCallback(() => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) { setError('Speech recognition is not supported in this browser (use Chrome or Edge).'); return; }
+
+    if (isListening) { recognitionRef.current?.stop(); return; }
+
+    const rec = new SR();
+    rec.lang = 'en-US';
+    rec.continuous = false;
+    rec.interimResults = false;
+    rec.onstart  = () => setIsListening(true);
+    rec.onend    = () => setIsListening(false);
+    rec.onerror  = () => setIsListening(false);
+    rec.onresult = (e: any) => {
+      const text = e.results[0][0].transcript;
+      setInputValue(prev => prev ? `${prev} ${text}` : text);
+    };
+    recognitionRef.current = rec;
+    rec.start();
+  }, [isListening]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -599,10 +624,23 @@ export const AIPromptInterface: React.FC<AIPromptInterfaceProps> = ({ className 
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               placeholder={currentFileId ? "Ask AI to edit..." : "Upload a file first..."}
-              className="w-full pl-4 pr-10 py-3 bg-transparent border-none focus:outline-none text-sm text-gray-800 placeholder-gray-400"
+              className="w-full pl-4 pr-20 py-3 bg-transparent border-none focus:outline-none text-sm text-gray-800 placeholder-gray-400"
               disabled={isSendingMessage || !currentFileId}
             />
-            <div className="absolute right-2 flex items-center">
+            <div className="absolute right-2 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={toggleSpeech}
+                disabled={isSendingMessage || !currentFileId}
+                title={isListening ? 'Stop recording' : 'Voice input'}
+                className={`p-1.5 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                  isListening
+                    ? 'bg-red-500 text-white animate-pulse'
+                    : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+              </button>
               <button
                 type="submit"
                 disabled={!inputValue.trim() || isSendingMessage || !currentFileId}
