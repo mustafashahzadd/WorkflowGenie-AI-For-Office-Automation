@@ -21,7 +21,7 @@ security = HTTPBearer()
 # Configuration
 SECRET_KEY = "your-secret-key-change-in-production"  # TODO: Move to environment variable
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_HOURS = 24
+ACCESS_TOKEN_EXPIRE_HOURS = 24 * 30  # 30 days
 
 # ============================================================================
 # REQUEST/RESPONSE MODELS

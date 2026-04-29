@@ -29,6 +29,7 @@ class MessageRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="Session ID for conversation continuity. If not provided, a new session will be created.")
     message: str = Field(..., description="User's message in natural language", example="Update John Smith's salary to 62000")
     file_id: Optional[str] = Field(None, description="Excel file ID to operate on. If omitted, auto-fetched from session or inferred from message intent.")
+    active_sheet: Optional[str] = Field(None, description="Currently active/visible sheet in the UI.")
 
 class MessageResponse(BaseModel):
     """Response model for message"""
@@ -227,7 +228,8 @@ Which would you prefer?"""
                 conversation_history=conversation_history,
                 session_summary=chat_session.summary,
                 db=db,
-                ws_manager=req.app.state.ws_manager
+                ws_manager=req.app.state.ws_manager,
+                active_sheet=request_data.active_sheet,
             )
             
             return result
@@ -345,7 +347,8 @@ async def _handle_excel_operation(
     conversation_history: List[Dict],
     session_summary: Optional[str],
     db: Session,
-    ws_manager
+    ws_manager,
+    active_sheet: Optional[str] = None,
 ):
     """
     Handle Excel automation workflow with proper orchestration.
@@ -386,14 +389,17 @@ async def _handle_excel_operation(
         
         logger.info(f"📋 Context: {len(available_files)} files, {len(recent_operations)} recent operations")
         
-        # Get column headers for context (if file_id provided)
+        # Get all sheet names + column headers from the first sheet
+        sheet_names: list = []
         column_headers = []
         if file_id:
             try:
-                column_headers = await tool_service.get_column_headers(file_id, "Sheet1")
-                logger.info(f"📊 Column headers: {column_headers}")
+                sheet_names = await tool_service.get_sheet_names(file_id)
+                if sheet_names:
+                    column_headers = await tool_service.get_column_headers(file_id, sheet_names[0])
+                logger.info(f"📋 Sheets: {sheet_names}, headers: {column_headers}")
             except Exception as e:
-                logger.warning(f"Could not get column headers: {e}")
+                logger.warning(f"Could not get sheet info: {e}")
         
         # ═══════════════════════════════════════════════════════════════
         # STEP 2: BROADCAST PLANNING STATUS
@@ -411,6 +417,9 @@ async def _handle_excel_operation(
         
         logger.info("🧠 Creating execution plan with LLM...")
         
+        # Active sheet: use what the UI says, else first sheet in file
+        current_sheet = active_sheet or (sheet_names[0] if sheet_names else "Sheet1")
+
         plan = llm_service.plan_excel_operations(
             user_intent=user_message,
             context={
@@ -418,7 +427,9 @@ async def _handle_excel_operation(
                 "session_summary": session_summary,
                 "available_files": available_files,
                 "recent_operations": recent_operations,
-                "column_headers": column_headers
+                "column_headers": column_headers,
+                "sheet_names": sheet_names,
+                "sheet_name": current_sheet,
             },
             provider=provider
         )
@@ -486,6 +497,7 @@ async def _handle_excel_operation(
                     "step": step["step"],
                     "description": step["description"],
                     "tool": step["tool"],
+                    "params": step.get("parameters", {}),
                     "status": "completed" if result["success"] else "failed",
                     "result": result.get("data"),
                     "error": result.get("error")

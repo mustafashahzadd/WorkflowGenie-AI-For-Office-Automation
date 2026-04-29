@@ -4481,9 +4481,10 @@ class MCPService:
         title: Optional[str] = None,
         position: str = "E1",
         width_cm: Optional[float] = None,
-        height_cm: Optional[float] = None
+        height_cm: Optional[float] = None,
+        data_sheet: Optional[str] = None,
     ) -> Dict:
-        """Create a bar/column chart"""
+        """Create a bar/column chart. data_sheet overrides sheet_name for data source."""
         from openpyxl.chart import BarChart as XlBarChart, Reference
 
         filepath = self._get_filepath(file_id)
@@ -4492,30 +4493,32 @@ class MCPService:
         if sheet_name not in wb.sheetnames:
             raise ValueError(f"Sheet '{sheet_name}' not found")
 
+        # Chart goes on sheet_name; data comes from data_sheet (defaults to sheet_name)
         ws = wb[sheet_name]
+        data_sheet = data_sheet or sheet_name
+        if data_sheet not in wb.sheetnames:
+            raise ValueError(f"Data sheet '{data_sheet}' not found")
+        ws_data = wb[data_sheet]
 
         # Auto-expand column-only ranges like "A:B" or "A" to include all used rows
         def _expand_col_range(rng: str) -> str:
-            """If rng lacks row numbers (e.g. 'A' or 'A:B'), append used-row bounds."""
             rng = rng.strip()
             parts = rng.split(':')
             expanded = []
             for p in parts:
                 p = p.strip()
-                if p and p.isalpha():  # pure column letter, no row
+                if p and p.isalpha():
                     p = f"{p}1"
                 expanded.append(p)
             if len(expanded) == 1:
-                # Single cell given - extend to last used row
-                max_row = ws.max_row or 1
-                expanded.append(expanded[0][0] + str(max_row))  # same col, last row
+                max_row = ws_data.max_row or 1
+                expanded.append(expanded[0][0] + str(max_row))
             return ':'.join(expanded)
 
         data_range = ','.join(_expand_col_range(p) for p in str(data_range).split(',') if p.strip())
-        # If the expanded range still only covers 1 row height or col width, auto-use full sheet range
         if not any(c.isdigit() for c in data_range):
-            max_row = ws.max_row or 1
-            max_col_letter = get_column_letter(ws.max_column or 2)
+            max_row = ws_data.max_row or 1
+            max_col_letter = get_column_letter(ws_data.max_column or 2)
             data_range = f"A1:{max_col_letter}{max_row}"
 
         range_parts = [part.strip() for part in str(data_range).split(',') if part.strip()]
@@ -4529,8 +4532,8 @@ class MCPService:
                     "(for example: 'A1:B11' or 'A1:D11')"
                 )
 
-            data = Reference(ws, min_col=start_col + 1, min_row=start_row, max_col=end_col, max_row=end_row)
-            categories = Reference(ws, min_col=start_col, min_row=start_row + 1, max_row=end_row)
+            data = Reference(ws_data, min_col=start_col + 1, min_row=start_row, max_col=end_col, max_row=end_row)
+            categories = Reference(ws_data, min_col=start_col, min_row=start_row + 1, max_row=end_row)
             titles_from_data = True
         elif len(range_parts) == 2:
             cat_start_row, cat_start_col, cat_end_row, cat_end_col = self._parse_range_address(range_parts[0])
@@ -4540,8 +4543,8 @@ class MCPService:
                 raise ValueError("Category range must be a single column (for example: 'A1:A11')")
 
             categories_min_row = cat_start_row + 1 if cat_start_row == val_start_row else cat_start_row
-            categories = Reference(ws, min_col=cat_start_col, min_row=categories_min_row, max_row=cat_end_row)
-            data = Reference(ws, min_col=val_start_col, min_row=val_start_row, max_col=val_end_col, max_row=val_end_row)
+            categories = Reference(ws_data, min_col=cat_start_col, min_row=categories_min_row, max_row=cat_end_row)
+            data = Reference(ws_data, min_col=val_start_col, min_row=val_start_row, max_col=val_end_col, max_row=val_end_row)
             titles_from_data = True
         else:
             raise ValueError(
@@ -4581,9 +4584,10 @@ class MCPService:
         title: Optional[str] = None,
         position: str = "E1",
         width_cm: Optional[float] = None,
-        height_cm: Optional[float] = None
+        height_cm: Optional[float] = None,
+        data_sheet: Optional[str] = None,
     ) -> Dict:
-        """Create a line chart"""
+        """Create a line chart. data_sheet overrides sheet_name for data source."""
         from openpyxl.chart import LineChart as XlLineChart, Reference
 
         filepath = self._get_filepath(file_id)
@@ -4593,6 +4597,10 @@ class MCPService:
             raise ValueError(f"Sheet '{sheet_name}' not found")
 
         ws = wb[sheet_name]
+        data_sheet = data_sheet or sheet_name
+        if data_sheet not in wb.sheetnames:
+            raise ValueError(f"Data sheet '{data_sheet}' not found")
+        ws_data = wb[data_sheet]
 
         range_parts = [part.strip() for part in str(data_range).split(',') if part.strip()]
 
@@ -4605,8 +4613,8 @@ class MCPService:
                     "(for example: 'A1:B11' or 'A1:D11')"
                 )
 
-            data = Reference(ws, min_col=start_col + 1, min_row=start_row, max_col=end_col, max_row=end_row)
-            categories = Reference(ws, min_col=start_col, min_row=start_row + 1, max_row=end_row)
+            data = Reference(ws_data, min_col=start_col + 1, min_row=start_row, max_col=end_col, max_row=end_row)
+            categories = Reference(ws_data, min_col=start_col, min_row=start_row + 1, max_row=end_row)
             titles_from_data = True
         elif len(range_parts) == 2:
             cat_start_row, cat_start_col, cat_end_row, cat_end_col = self._parse_range_address(range_parts[0])
@@ -4616,8 +4624,8 @@ class MCPService:
                 raise ValueError("Category range must be a single column (for example: 'A1:A11')")
 
             categories_min_row = cat_start_row + 1 if cat_start_row == val_start_row else cat_start_row
-            categories = Reference(ws, min_col=cat_start_col, min_row=categories_min_row, max_row=cat_end_row)
-            data = Reference(ws, min_col=val_start_col, min_row=val_start_row, max_col=val_end_col, max_row=val_end_row)
+            categories = Reference(ws_data, min_col=cat_start_col, min_row=categories_min_row, max_row=cat_end_row)
+            data = Reference(ws_data, min_col=val_start_col, min_row=val_start_row, max_col=val_end_col, max_row=val_end_row)
             titles_from_data = True
         else:
             raise ValueError(
@@ -4655,9 +4663,10 @@ class MCPService:
         title: Optional[str] = None,
         position: str = "E1",
         width_cm: Optional[float] = None,
-        height_cm: Optional[float] = None
+        height_cm: Optional[float] = None,
+        data_sheet: Optional[str] = None,
     ) -> Dict:
-        """Create a pie chart"""
+        """Create a pie chart. data_sheet overrides sheet_name for data source."""
         from openpyxl.chart import PieChart as XlPieChart, Reference
 
         filepath = self._get_filepath(file_id)
@@ -4667,6 +4676,10 @@ class MCPService:
             raise ValueError(f"Sheet '{sheet_name}' not found")
 
         ws = wb[sheet_name]
+        data_sheet = data_sheet or sheet_name
+        if data_sheet not in wb.sheetnames:
+            raise ValueError(f"Data sheet '{data_sheet}' not found")
+        ws_data = wb[data_sheet]
 
         range_parts = [part.strip() for part in str(data_range).split(',') if part.strip()]
 
@@ -4679,8 +4692,8 @@ class MCPService:
                     "(for example: 'A1:B11')"
                 )
 
-            categories = Reference(ws, min_col=start_col, min_row=start_row + 1, max_row=end_row)
-            data = Reference(ws, min_col=start_col + 1, min_row=start_row, max_row=end_row)
+            categories = Reference(ws_data, min_col=start_col, min_row=start_row + 1, max_row=end_row)
+            data = Reference(ws_data, min_col=start_col + 1, min_row=start_row, max_row=end_row)
             titles_from_data = True
         elif len(range_parts) == 2:
             cat_start_row, cat_start_col, cat_end_row, cat_end_col = self._parse_range_address(range_parts[0])
@@ -4690,8 +4703,8 @@ class MCPService:
                 raise ValueError("Category range must be a single column (for example: 'A1:A11')")
 
             categories_min_row = cat_start_row + 1 if cat_start_row == val_start_row else cat_start_row
-            categories = Reference(ws, min_col=cat_start_col, min_row=categories_min_row, max_row=cat_end_row)
-            data = Reference(ws, min_col=val_start_col, min_row=val_start_row, max_row=val_end_row)
+            categories = Reference(ws_data, min_col=cat_start_col, min_row=categories_min_row, max_row=cat_end_row)
+            data = Reference(ws_data, min_col=val_start_col, min_row=val_start_row, max_row=val_end_row)
             titles_from_data = True
 
             if val_end_col > val_start_col:
@@ -6825,6 +6838,18 @@ class MCPService:
                 "message": f"Professional {dt.upper()} created on sheet '{sn}'",
                 "sheet": sn,
             }
+
+    async def get_sheet_names(self, file_id: str) -> List[str]:
+        """Return all sheet names in the workbook"""
+        try:
+            filepath = self._get_filepath(file_id)
+            wb = openpyxl.load_workbook(filepath, read_only=True)
+            names = wb.sheetnames
+            wb.close()
+            return names
+        except Exception as e:
+            logger.error(f"Error getting sheet names: {e}")
+            return []
 
     async def get_column_headers(self, file_id: str, sheet_name: str) -> List[str]:
         """Get column headers from a sheet for LLM context"""

@@ -1,0 +1,62 @@
+{
+  "name": "excelerate-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "description": "AI-powered Excel-like spreadsheet application with real-time agent collaboration",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:ui": "vitest --ui"
+  },
+  "dependencies": {
+    "@fortune-sheet/core": "^1.0.4",
+    "@fortune-sheet/react": "^1.0.4",
+    "@types/exceljs": "^0.5.3",
+    "clsx": "^2.0.0",
+    "exceljs": "^4.4.0",
+    "framer-motion": "^12.23.25",
+    "lucide-react": "^0.294.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^7.10.1",
+    "recharts": "^3.8.1",
+    "tailwind-merge": "^2.1.0",
+    "tailwindcss": "^3.3.6",
+    "uuid": "^9.0.1",
+    "xlsx": "^0.18.5",
+    "zustand": "^4.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.4",
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@types/uuid": "^9.0.7",
+    "@typescript-eslint/eslint-plugin": "^6.14.0",
+    "@typescript-eslint/parser": "^6.14.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.16",
+    "baseline-browser-mapping": "^2.9.5",
+    "eslint": "^8.55.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5",
+    "postcss": "^8.4.32",
+    "typescript": "^5.2.2",
+    "vite": "^7.2.7",
+    "vitest": "^4.0.15"
+  },
+  "keywords": [
+    "excel",
+    "spreadsheet",
+    "ai",
+    "agent",
+    "typescript",
+    "react",
+    "real-time"
+  ],
+  "author": "Excelerate Team",
+  "license": "MIT"
+}

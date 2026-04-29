@@ -725,15 +725,18 @@ Be friendly, concise, and helpful. Understand user intent naturally."""
         subj_str = json.dumps(subject_cols) if subject_cols else '["Col1", "Col2", "Col3"]'
 
         file_id = context.get('file_id', 'NOT_PROVIDED')
-        sheet_name = context.get('sheet_name', 'Sheet1')
+        sheet_names = context.get('sheet_names', [])
+        sheet_name = context.get('sheet_name', sheet_names[0] if sheet_names else 'Sheet1')
+        sheets_display = ', '.join(sheet_names) if sheet_names else sheet_name
 
         prompt = f"""You are WorkflowGenie, an expert Excel automation planner. Convert the user's natural language request into a precise step-by-step execution plan.
 
 ═══ CONTEXT ═══
 Date/Time: {current_time}
 File ID: {file_id}
-Sheet Name: {sheet_name}
-Column Headers: {col_str}
+Available Sheets: {sheets_display}
+Default/First Sheet: {sheet_name}
+Column Headers (first sheet): {col_str}
 Session Summary: {context.get('session_summary', 'New session')}
 Recent Operations: {json.dumps(context.get('recent_operations', []), indent=2)}
 Available Files: {json.dumps(context.get('available_files', []), indent=2)}
@@ -815,9 +818,9 @@ Available Files: {json.dumps(context.get('available_files', []), indent=2)}
 insert_image(file_id, sheet_name, image_url, anchor_cell?, width_pixels?, height_pixels?) — Download image from URL and insert it into the sheet at anchor_cell (e.g. "F2"). Use when user provides an image URL and wants it placed in the spreadsheet.
 
 ── CHARTS (55-63) ──
-55. create_bar_chart(file_id, sheet_name, data_range, title?, position?, width_cm?, height_cm?) — Bar/column chart. data_range MUST be a full cell range like "A1:B11" (categories col A, values col B). NEVER use column letters alone. position = top-left anchor cell e.g. "F2". width_cm/height_cm control size in cm (default ~15x10). When user says "place at F2" or "between F2 and M20", set position="F2" and estimate width_cm/height_cm to fit.
-56. create_line_chart(file_id, sheet_name, data_range, title?, position?, width_cm?, height_cm?) — Line chart. data_range MUST be a full cell range like "A1:C11". Good for trends over time.
-57. create_pie_chart(file_id, sheet_name, data_range, title?, position?, width_cm?, height_cm?) — Pie chart. data_range MUST be a full cell range like "A1:B11".
+55. create_bar_chart(file_id, sheet_name, data_range, title?, position?, width_cm?, height_cm?, data_sheet?) — Bar/column chart. sheet_name = sheet where chart is placed. data_sheet = sheet where data lives (omit if same as sheet_name). data_range MUST be a full cell range like "A1:B11" (categories col A, values col B). NEVER use column letters alone. position = top-left anchor cell e.g. "F2". width_cm/height_cm control size in cm (default ~15x10). When user says "place at F2" or "between F2 and M20", set position="F2" and estimate width_cm/height_cm to fit. CROSS-SHEET EXAMPLE: chart on "visual analysis" using data from "Sales" → sheet_name="visual analysis", data_sheet="Sales", data_range="A1:C6".
+56. create_line_chart(file_id, sheet_name, data_range, title?, position?, width_cm?, height_cm?, data_sheet?) — Line chart. data_sheet = sheet where data lives (omit if same as sheet_name). data_range MUST be a full cell range like "A1:C11". Good for trends over time.
+57. create_pie_chart(file_id, sheet_name, data_range, title?, position?, width_cm?, height_cm?, data_sheet?) — Pie chart. data_sheet = sheet where data lives (omit if same as sheet_name). data_range MUST be a full cell range like "A1:B11".
 58. create_scatter_plot(file_id, sheet_name, x_range, y_range, title?, position?) — Scatter plot. x_range and y_range must be full ranges.
 59. create_area_chart(file_id, sheet_name, data_range, title?, position?) — Area chart. Good for volume trends, cumulative values. Same range format as line chart.
 60. create_radar_chart(file_id, sheet_name, data_range, title?, position?) — Radar/spider chart. Best for multi-dimensional KPI or performance comparisons.

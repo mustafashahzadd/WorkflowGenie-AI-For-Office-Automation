@@ -1,0 +1,137 @@
+/**
+ * Global application styles and CSS variables
+ * Defines the base styling for the Excel-like interface
+ */
+
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* CSS Variables for dynamic theming */
+:root {
+  --excel-primary: #0F9D58; /* Google Sheets Green */
+  --excel-secondary: #1a73e8; /* Google Blue */
+  --excel-gray-50: #f8f9fa;
+  --excel-gray-100: #e9ecef;
+  --excel-gray-200: #dee2e6;
+  --excel-gray-300: #ced4da;
+  --excel-gray-400: #adb5bd;
+  --excel-gray-500: #6c757d;
+  --excel-border: #e0e0e0;
+  --excel-hover: #f1f3f4;
+  --cell-size: 24px;
+  --header-height: 64px;
+  --sidebar-width: 400px;
+}
+
+/* Base styles */
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: Roboto, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #202124;
+  background-color: #ffffff;
+}
+
+/* Custom Scrollbar to match Excel */
+::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border: 3px solid #f1f1f1;
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+::-webkit-scrollbar-corner {
+  background: #f1f1f1;
+}
+
+/* Excel-like grid styles */
+.excel-grid {
+  display: grid;
+  border: 1px solid var(--excel-border);
+  min-width: fit-content;
+  min-height: fit-content;
+}
+
+.excel-row-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #c0c0c0;
+  border-right: 1px solid #c0c0c0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 11px;
+  color: #666;
+  user-select: none;
+}
+
+.excel-col-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #c0c0c0;
+  border-right: 1px solid #c0c0c0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 11px;
+  color: #666;
+  user-select: none;
+  cursor: pointer;
+}
+
+.excel-col-header:hover, .excel-row-header:hover {
+  background-color: #e8eaed;
+  color: #202124;
+}
+
+.excel-cell {
+  border-bottom: 1px solid #e0e0e0;
+  border-right: 1px solid #e0e0e0;
+  padding: 0 4px;
+  min-height: var(--cell-size);
+  display: flex;
+  align-items: center;
+  cursor: cell;
+  position: relative;
+  background-color: #ffffff;
+  font-size: 13px;
+  outline: none;
+}
+
+.excel-cell.selected {
+  background-color: rgba(26, 115, 232, 0.1);
+  border: 2px solid #1a73e8;
+  z-index: 10;
+}
+
+.excel-cell.editing {
+  background-color: white;
+  z-index: 20;
+  padding: 0;
+}
+
+.excel-cell input {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  padding: 0 4px;
+  font-family: inherit;
+  font-size: inherit;
+}
