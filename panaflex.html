@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>WorkflowGenie Panaflex</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&family=Roboto+Condensed:wght@700&display=swap');
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'Roboto',sans-serif;background:#fff;width:1020px;min-height:1440px;}
+
+  /* ── HEADER ── */
+  .header{background:linear-gradient(135deg,#0a3d1f 0%,#107c41 50%,#1a9950 100%);color:#fff;text-align:center;padding:28px 36px 22px;}
+  .header h1{font-family:'Roboto Condensed',sans-serif;font-size:38px;font-weight:900;letter-spacing:2px;text-transform:uppercase;line-height:1.15;text-shadow:0 2px 6px rgba(0,0,0,.35);}
+  .header p{font-size:15px;margin-top:8px;opacity:.9;letter-spacing:.5px;}
+
+  /* ── BODY ── */
+  .body{display:grid;grid-template-columns:1fr 1fr;gap:0;padding:12px 14px;background:#f7f9f7;}
+
+  /* ── SECTION ── */
+  .section{background:#fff;border:1px solid #d4e8d8;border-radius:6px;padding:13px 14px;margin:6px;}
+  .section h2{font-size:15px;font-weight:700;color:#0a3d1f;border-bottom:2px solid #107c41;padding-bottom:5px;margin-bottom:9px;text-transform:uppercase;letter-spacing:.5px;}
+  .section p, .section li{font-size:12.5px;color:#222;line-height:1.65;}
+  .section ul{padding-left:16px;}
+  .section ul li{margin-bottom:4px;}
+
+  /* ── FULL WIDTH ── */
+  .full{grid-column:1/-1;}
+
+  /* ── TITLE ROW ── */
+  .title-row{grid-column:1/-1;background:linear-gradient(90deg,#e8f5ec,#fff,#e8f5ec);border:1px solid #c5dfc8;border-radius:6px;padding:10px 16px;margin:6px;display:flex;align-items:center;gap:12px;}
+  .title-row .badge{background:#107c41;color:#fff;font-size:11px;font-weight:700;padding:4px 10px;border-radius:12px;white-space:nowrap;}
+  .title-row p{font-size:12.5px;}
+
+  /* ── BLOCK DIAGRAM ── */
+  .diagram{display:flex;align-items:center;justify-content:center;gap:5px;padding:8px 2px;flex-wrap:wrap;}
+  .dbox{background:linear-gradient(135deg,#e8f5ec,#d0ebd8);border:1.5px solid #107c41;border-radius:6px;padding:8px 10px;text-align:center;font-size:11px;font-weight:700;color:#0a3d1f;min-width:78px;}
+  .dbox span{display:block;font-size:13px;margin-bottom:3px;}
+  .darrow{font-size:18px;color:#107c41;font-weight:900;}
+  .dbox.ai{background:linear-gradient(135deg,#fff3e0,#ffe0b2);border-color:#e65100;}
+  .dbox.ai span{color:#e65100;}
+  .dbox.db{background:linear-gradient(135deg,#e3f2fd,#bbdefb);border-color:#1565c0;}
+  .dbox.db span{color:#1565c0;}
+
+  /* ── ARCH DIAGRAM ── */
+  .arch{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px;}
+  .arch-item{background:#f0f7f2;border:1px solid #107c41;border-radius:5px;padding:7px 8px;text-align:center;}
+  .arch-item .icon{font-size:20px;display:block;}
+  .arch-item .label{font-size:10.5px;font-weight:700;color:#0a3d1f;margin-top:3px;}
+  .arch-item .sub{font-size:9.5px;color:#555;line-height:1.45;}
+
+  /* ── TOOLS GRID ── */
+  .tools-grid{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+  .tool-badge{display:flex;align-items:center;gap:6px;background:#f0f7f2;border:1px solid #c5dfc8;border-radius:4px;padding:4px 10px;font-size:12px;font-weight:600;color:#0a3d1f;}
+  .tool-badge img{width:15px;height:15px;flex-shrink:0;}
+  .tool-icon{width:15px;height:15px;border-radius:3px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:900;color:#fff;}
+
+  /* ── RESULTS TABLE ── */
+  table{width:100%;border-collapse:collapse;margin-top:7px;font-size:12.5px;}
+  th{background:#107c41;color:#fff;padding:6px 8px;text-align:center;font-weight:700;}
+  td{padding:5px 8px;text-align:center;border-bottom:1px solid #e0ede3;}
+  tr:nth-child(even) td{background:#f0f7f2;}
+  .best{color:#107c41;font-weight:700;}
+
+  /* ── TIMELINE ── */
+  .timeline{display:flex;align-items:flex-start;justify-content:space-between;margin-top:8px;position:relative;}
+  .timeline::before{content:'';position:absolute;top:18px;left:0;right:0;height:3px;background:linear-gradient(90deg,#107c41,#1a9950);border-radius:2px;}
+  .titem{flex:1;text-align:center;position:relative;}
+  .tdot{width:18px;height:18px;background:#107c41;border-radius:50%;margin:0 auto 6px;border:2px solid #fff;box-shadow:0 0 0 2px #107c41;position:relative;z-index:1;}
+  .tlabel{font-size:11px;font-weight:700;color:#0a3d1f;line-height:1.35;}
+  .tdate{font-size:10px;color:#555;margin-top:2px;}
+
+  /* ── CONTRIBUTION CARDS ── */
+  .contrib-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:6px;}
+  .contrib-card{background:#f0f7f2;border-left:3px solid #107c41;border-radius:0 5px 5px 0;padding:7px 10px;}
+  .contrib-card .ct{font-size:12.5px;font-weight:700;color:#0a3d1f;margin-bottom:3px;}
+  .contrib-card p{font-size:12.5px;color:#444;line-height:1.5;}
+
+  /* ── FOOTER ── */
+  .footer{background:linear-gradient(135deg,#0a3d1f,#107c41);color:#fff;display:flex;align-items:center;justify-content:space-between;padding:14px 26px;gap:12px;}
+  .footer-logo{display:flex;align-items:center;gap:12px;}
+  .logo-circle{width:44px;height:44px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:900;color:#0a3d1f;text-align:center;line-height:1.1;flex-shrink:0;border:2px solid #ffd700;}
+  .footer-uni{font-size:11px;font-weight:700;line-height:1.6;text-transform:uppercase;letter-spacing:.3px;}
+  .footer-people{text-align:right;font-size:11px;line-height:1.8;}
+  .footer-people .lbl{font-size:10px;opacity:.75;font-weight:400;}
+  .footer-people strong{font-weight:700;}
+  .divider-v{width:1px;background:rgba(255,255,255,.3);align-self:stretch;margin:0 8px;}
+
+  /* ── FEATURE PILL ── */
+  .pill{display:inline-block;background:#107c41;color:#fff;font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:10px;margin:3px 3px;}
+  .pill.orange{background:#e65100;}
+  .pill.blue{background:#1565c0;}
+
+  /* ── HIGHLIGHT BOX ── */
+  .hbox{background:#e8f5ec;border:1px solid #107c41;border-radius:5px;padding:7px 10px;margin-top:7px;font-size:12.5px;font-weight:600;color:#0a3d1f;text-align:center;}
+</style>
+</head>
+<body>
+
+<!-- ══════════════════ HEADER ══════════════════ -->
+<div class="header">
+  <h1>WorkflowGenie — AI-Powered Office Automation</h1>
+  <p>Automating Excel & Data Operations via Natural Language &nbsp;|&nbsp; Large Language Models &nbsp;|&nbsp; Retrieval-Augmented Generation</p>
+</div>
+
+<!-- ══════════════════ BODY ══════════════════ -->
+<div class="body">
+
+  <!-- ── TITLE BADGE ROW ── -->
+  <div class="title-row">
+    <span class="badge">FYP 2025–26</span>
+    <p style="color:#333;">
+      An intelligent web application that lets users control spreadsheets using plain English commands — powered by
+      <strong>Large Language Models</strong>, 91 specialized tools, 106+ Excel-compatible formulas, and a
+      built-in RAG engine for document-aware Q&amp;A.
+    </p>
+  </div>
+
+  <!-- MOTIVATION -->
+  <div class="section">
+    <h2>Motivation</h2>
+    <ul>
+      <li>Knowledge workers spend <strong>over 2 hours/day</strong> on repetitive spreadsheet tasks.</li>
+      <li>Non-technical users struggle with Excel formulas, pivot tables, and charts.</li>
+      <li>AI breakthroughs in LLMs now enable <strong>natural language → operation</strong> translation.</li>
+      <li>Existing tools lack deep Excel integration with real-time AI reasoning.</li>
+      <li>WorkflowGenie eliminates the skill barrier and speeds up data workflows by <strong>10×</strong>.</li>
+    </ul>
+  </div>
+
+  <!-- GENERATIVE AI USAGE STATEMENT -->
+  <div class="section">
+    <h2>Generative AI Usage Statement</h2>
+    <p style="font-size:9.5px;line-height:1.6;color:#333;margin-top:4px;">
+      AI tools were used for limited assistance in brainstorming, documentation refinement, complex syntax resolution, and diagram enhancement.
+      All implementation, analysis, and conclusions were carried out independently by the group members.
+    </p>
+  </div>
+
+  <!-- HOW IT WORKS -->
+  <div class="section">
+    <h2>How It Works</h2>
+    <svg viewBox="0 0 370 200" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;margin-top:6px;">
+      <defs>
+        <marker id="ha" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#107c41"/>
+        </marker>
+        <filter id="hs" x="-10%" y="-10%" width="130%" height="140%">
+          <feDropShadow dx="1" dy="2" stdDeviation="2" flood-color="#00000018"/>
+        </filter>
+      </defs>
+
+      <!-- Step 1 -->
+      <rect x="10" y="10" width="75" height="80" rx="8" fill="white" stroke="#107c41" stroke-width="2" filter="url(#hs)"/>
+      <circle cx="47" cy="26" r="10" fill="#107c41"/>
+      <text x="47" y="30" text-anchor="middle" font-size="11" font-weight="700" fill="white" font-family="Roboto,sans-serif">1</text>
+      <text x="47" y="57" text-anchor="middle" font-size="11" font-weight="700" fill="#0a3d1f" font-family="Roboto,sans-serif">Upload</text>
+      <text x="47" y="71" text-anchor="middle" font-size="9.5" fill="#555" font-family="Roboto,sans-serif">Excel File</text>
+
+      <!-- Arrow 1→2 -->
+      <line x1="87" y1="50" x2="103" y2="50" stroke="#107c41" stroke-width="2" marker-end="url(#ha)"/>
+
+      <!-- Step 2 -->
+      <rect x="105" y="10" width="75" height="80" rx="8" fill="white" stroke="#107c41" stroke-width="2" filter="url(#hs)"/>
+      <circle cx="142" cy="26" r="10" fill="#107c41"/>
+      <text x="142" y="30" text-anchor="middle" font-size="11" font-weight="700" fill="white" font-family="Roboto,sans-serif">2</text>
+      <text x="142" y="57" text-anchor="middle" font-size="11" font-weight="700" fill="#0a3d1f" font-family="Roboto,sans-serif">Type / Speak</text>
+      <text x="142" y="71" text-anchor="middle" font-size="9.5" fill="#555" font-family="Roboto,sans-serif">Your Command</text>
+
+      <!-- Arrow 2→3 -->
+      <line x1="182" y1="50" x2="198" y2="50" stroke="#107c41" stroke-width="2" marker-end="url(#ha)"/>
+
+      <!-- Step 3 -->
+      <rect x="200" y="10" width="75" height="80" rx="8" fill="#fff3e0" stroke="#e65100" stroke-width="2" filter="url(#hs)"/>
+      <circle cx="237" cy="26" r="10" fill="#e65100"/>
+      <text x="237" y="30" text-anchor="middle" font-size="11" font-weight="700" fill="white" font-family="Roboto,sans-serif">3</text>
+      <text x="237" y="57" text-anchor="middle" font-size="11" font-weight="700" fill="#bf360c" font-family="Roboto,sans-serif">AI Processes</text>
+      <text x="237" y="71" text-anchor="middle" font-size="9.5" fill="#555" font-family="Roboto,sans-serif">AI Executes</text>
+
+      <!-- Arrow 3→4 -->
+      <line x1="277" y1="50" x2="293" y2="50" stroke="#107c41" stroke-width="2" marker-end="url(#ha)"/>
+
+      <!-- Step 4 -->
+      <rect x="295" y="10" width="65" height="80" rx="8" fill="#e8f5ec" stroke="#107c41" stroke-width="2" filter="url(#hs)"/>
+      <circle cx="327" cy="26" r="10" fill="#107c41"/>
+      <text x="327" y="30" text-anchor="middle" font-size="11" font-weight="700" fill="white" font-family="Roboto,sans-serif">4</text>
+      <text x="327" y="57" text-anchor="middle" font-size="11" font-weight="700" fill="#0a3d1f" font-family="Roboto,sans-serif">Result</text>
+      <text x="327" y="71" text-anchor="middle" font-size="9.5" fill="#555" font-family="Roboto,sans-serif">Instantly Live</text>
+
+      <!-- Example commands -->
+      <rect x="10" y="102" width="350" height="90" rx="7" fill="#f0f7f2" stroke="#c5dfc8" stroke-width="1.2"/>
+      <text x="185" y="118" text-anchor="middle" font-size="10" font-weight="700" fill="#0a3d1f" font-family="Roboto,sans-serif">Example Commands</text>
+
+      <!-- cmd 1 -->
+      <rect x="20" y="124" width="155" height="16" rx="4" fill="#107c41"/>
+      <text x="98" y="135" text-anchor="middle" font-size="8.5" fill="white" font-family="Roboto,sans-serif">"Sort sales by revenue descending"</text>
+      <!-- cmd 2 -->
+      <rect x="185" y="124" width="165" height="16" rx="4" fill="#107c41"/>
+      <text x="268" y="135" text-anchor="middle" font-size="8.5" fill="white" font-family="Roboto,sans-serif">"Create a bar chart for Q1 data"</text>
+      <!-- cmd 3 -->
+      <rect x="20" y="147" width="155" height="16" rx="4" fill="#e65100"/>
+      <text x="98" y="158" text-anchor="middle" font-size="8.5" fill="white" font-family="Roboto,sans-serif">"Apply VLOOKUP across sheets"</text>
+      <!-- cmd 4 -->
+      <rect x="185" y="147" width="165" height="16" rx="4" fill="#e65100"/>
+      <text x="268" y="158" text-anchor="middle" font-size="8.5" fill="white" font-family="Roboto,sans-serif">"Highlight cells where profit &lt; 0"</text>
+      <!-- cmd 5 -->
+      <rect x="20" y="170" width="155" height="16" rx="4" fill="#1565c0"/>
+      <text x="98" y="181" text-anchor="middle" font-size="8.5" fill="white" font-family="Roboto,sans-serif">"What is the avg monthly revenue?"</text>
+      <!-- cmd 6 -->
+      <rect x="185" y="170" width="165" height="16" rx="4" fill="#1565c0"/>
+      <text x="268" y="181" text-anchor="middle" font-size="8.5" fill="white" font-family="Roboto,sans-serif">"Forecast next 6 months trend"</text>
+    </svg>
+  </div>
+
+  <!-- BLOCK DIAGRAM -->
+  <div class="section full" style="padding:10px 14px;">
+    <h2>System Architecture Diagram</h2>
+    <!-- One-line layer strip -->
+    <div style="display:flex;align-items:center;gap:6px;margin:8px 0 6px;flex-wrap:nowrap;">
+      <span style="background:#f0f7f2;border:1.5px solid #107c41;border-radius:4px;padding:3px 14px;font-size:10px;font-weight:700;color:#107c41;white-space:nowrap;">Presentation</span>
+      <span style="color:#107c41;font-size:16px;font-weight:900;">→</span>
+      <span style="background:#e8f5ec;border:1.5px solid #1a9950;border-radius:4px;padding:3px 14px;font-size:10px;font-weight:700;color:#0a5c2a;white-space:nowrap;">Frontend</span>
+      <span style="color:#555;font-size:16px;font-weight:900;">→</span>
+      <span style="background:#fff8f0;border:1.5px solid #e65100;border-radius:4px;padding:3px 14px;font-size:10px;font-weight:700;color:#bf360c;white-space:nowrap;">Application</span>
+      <span style="color:#555;font-size:16px;font-weight:900;">→</span>
+      <span style="background:#e3f2fd;border:1.5px solid #1565c0;border-radius:4px;padding:3px 14px;font-size:10px;font-weight:700;color:#0d47a1;white-space:nowrap;">Data</span>
+    </div>
+    <svg viewBox="0 0 880 488" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;margin-top:4px;">
+      <defs>
+        <marker id="ca" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#44515F"/>
+        </marker>
+        <marker id="cb" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#3D6FA8"/>
+        </marker>
+        <marker id="cg" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#888"/>
+        </marker>
+        <filter id="cs" x="-5%" y="-5%" width="110%" height="120%">
+          <feDropShadow dx="1" dy="1.5" stdDeviation="1.5" flood-color="#00000020"/>
+        </filter>
+      </defs>
+
+      <!-- ── LAYER BANDS ── -->
+      <rect x="8" y="4"   width="864" height="122" rx="8" fill="#EEF3FA" stroke="#7A9EC8" stroke-width="1.2"/>
+      <rect x="8" y="134" width="864" height="76"  rx="8" fill="#F5F2EC" stroke="#C0AE90" stroke-width="1.2"/>
+      <rect x="8" y="218" width="864" height="152" rx="8" fill="#FBF8F0" stroke="#C8B878" stroke-width="1.2"/>
+      <rect x="8" y="378" width="864" height="80"  rx="8" fill="#EDF5EE" stroke="#7AB890" stroke-width="1.2"/>
+
+      <!-- ── WEB CLIENT CONTAINER ── -->
+      <rect x="16" y="14" width="848" height="102" rx="6" fill="white" fill-opacity="0.55" stroke="#5B7FA6" stroke-width="1.5" filter="url(#cs)"/>
+      <text x="30" y="31" font-size="10" font-weight="700" fill="#2D4F7A" font-family="Roboto,sans-serif">Web Client</text>
+      <text x="103" y="31" font-size="9" fill="#6680A0" font-family="Roboto,sans-serif">[Browser]</text>
+
+      <!-- FortuneSheet sub-box -->
+      <rect x="28" y="38" width="246" height="66" rx="5" fill="white" stroke="#7A9EC8" stroke-width="1.2" filter="url(#cs)"/>
+      <text x="151" y="67" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2D4F7A" font-family="Roboto,sans-serif">FortuneSheet Grid</text>
+      <text x="151" y="81" text-anchor="middle" font-size="9" fill="#667788" font-family="Roboto,sans-serif">Live Spreadsheet UI</text>
+
+      <!-- Voice Input sub-box -->
+      <rect x="317" y="38" width="246" height="66" rx="5" fill="white" stroke="#7A9EC8" stroke-width="1.2" filter="url(#cs)"/>
+      <text x="440" y="67" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2D4F7A" font-family="Roboto,sans-serif">Voice Input Module</text>
+      <text x="440" y="81" text-anchor="middle" font-size="9" fill="#667788" font-family="Roboto,sans-serif">Web Speech API · STT</text>
+
+      <!-- Zustand sub-box -->
+      <rect x="606" y="38" width="246" height="66" rx="5" fill="white" stroke="#7A9EC8" stroke-width="1.2" filter="url(#cs)"/>
+      <text x="729" y="67" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2D4F7A" font-family="Roboto,sans-serif">State Management</text>
+      <text x="729" y="81" text-anchor="middle" font-size="9" fill="#667788" font-family="Roboto,sans-serif">Zustand · TypeScript</text>
+
+      <!-- Arrow: Web Client → FastAPI -->
+      <line x1="440" y1="116" x2="440" y2="142" stroke="#44515F" stroke-width="1.8" marker-end="url(#ca)"/>
+      <rect x="404" y="119" width="72" height="13" rx="3" fill="#44515F"/>
+      <text x="440" y="129" text-anchor="middle" font-size="8.5" fill="white" font-weight="700" font-family="Roboto,sans-serif">HTTP / REST</text>
+
+      <!-- ── FASTAPI (single entry point) ── -->
+      <rect x="240" y="142" width="400" height="56" rx="6" fill="white" stroke="#B09A80" stroke-width="2" filter="url(#cs)"/>
+      <text x="440" y="168" text-anchor="middle" font-size="11" font-weight="700" fill="#5A4030" font-family="Roboto,sans-serif">FastAPI Backend</text>
+      <text x="440" y="183" text-anchor="middle" font-size="9" fill="#778899" font-family="Roboto,sans-serif">Python · SQLAlchemy · Uvicorn · Single Entry Point</text>
+
+      <!-- Arrow: FastAPI → LLM -->
+      <line x1="440" y1="198" x2="440" y2="226" stroke="#44515F" stroke-width="1.8" marker-end="url(#ca)"/>
+
+      <!-- SQL route: FastAPI → Supabase through corridor x=282 (between MCP right=250 and LLM left=323) -->
+      <circle cx="282" cy="198" r="3" fill="#3D6FA8"/>
+      <line x1="282" y1="198" x2="282" y2="384" stroke="#3D6FA8" stroke-width="1.5" marker-end="url(#cb)"/>
+      <rect x="254" y="294" width="56" height="13" rx="4" fill="#3D6FA8"/>
+      <text x="282" y="304" text-anchor="middle" font-size="8" fill="white" font-weight="700" font-family="Roboto,sans-serif">SQL / Auth</text>
+
+      <!-- ── MCP TOOL SERVER ── -->
+      <rect x="16" y="226" width="234" height="116" rx="6" fill="white" stroke="#A09080" stroke-width="1.8" filter="url(#cs)"/>
+      <text x="133" y="252" text-anchor="middle" font-size="11" font-weight="700" fill="#504030" font-family="Roboto,sans-serif">MCP Tool Server</text>
+      <text x="133" y="267" text-anchor="middle" font-size="9" fill="#778899" font-family="Roboto,sans-serif">91 Tools · Excel Operations</text>
+      <text x="133" y="281" text-anchor="middle" font-size="9" fill="#778899" font-family="Roboto,sans-serif">Formulas · Charts · Pivot</text>
+      <text x="133" y="322" text-anchor="middle" font-size="8.5" fill="#A09080" font-style="italic" font-family="Roboto,sans-serif">FastMCP · Python</text>
+
+      <!-- ── LLM AI ENGINE (ORCHESTRATION HUB) ── -->
+      <rect x="323" y="226" width="234" height="116" rx="6" fill="#FFFCF0" stroke="#B09040" stroke-width="2.5" filter="url(#cs)"/>
+      <rect x="384" y="220" width="112" height="14" rx="4" fill="#B09040"/>
+      <text x="440" y="230" text-anchor="middle" font-size="7.5" fill="white" font-weight="700" letter-spacing="0.8" font-family="Roboto,sans-serif">ORCHESTRATION HUB</text>
+      <text x="440" y="252" text-anchor="middle" font-size="11" font-weight="700" fill="#6B5010" font-family="Roboto,sans-serif">LLM AI Engine</text>
+      <text x="440" y="267" text-anchor="middle" font-size="9" fill="#778899" font-family="Roboto,sans-serif">Claude · Tool-use Pipeline</text>
+      <text x="440" y="281" text-anchor="middle" font-size="9" fill="#778899" font-family="Roboto,sans-serif">Reasoning · Context Mgmt</text>
+      <text x="440" y="322" text-anchor="middle" font-size="8.5" fill="#B09040" font-style="italic" font-family="Roboto,sans-serif">Anthropic API</text>
+
+      <!-- ── RAG ENGINE (ON-DEMAND) ── -->
+      <rect x="630" y="226" width="234" height="116" rx="6" fill="#F9F9F9" stroke="#AAAAAA" stroke-width="1.5" stroke-dasharray="7,4" filter="url(#cs)"/>
+      <rect x="703" y="220" width="88" height="14" rx="4" fill="#888888"/>
+      <text x="747" y="230" text-anchor="middle" font-size="7.5" fill="white" font-weight="700" letter-spacing="0.8" font-family="Roboto,sans-serif">ON-DEMAND</text>
+      <text x="747" y="252" text-anchor="middle" font-size="11" font-weight="700" fill="#444444" font-family="Roboto,sans-serif">RAG Engine</text>
+      <text x="747" y="267" text-anchor="middle" font-size="9" fill="#778899" font-family="Roboto,sans-serif">Retrieval-Augmented Gen</text>
+      <text x="747" y="281" text-anchor="middle" font-size="9" fill="#778899" font-family="Roboto,sans-serif">Context Enrichment</text>
+      <text x="747" y="322" text-anchor="middle" font-size="8.5" fill="#AAAAAA" font-style="italic" font-family="Roboto,sans-serif">FAISS · Sentence-BERT</text>
+
+      <!-- Bidirectional: LLM ↔ MCP (solid — frequent) -->
+      <line x1="323" y1="284" x2="250" y2="284" stroke="#44515F" stroke-width="1.8" marker-end="url(#ca)"/>
+      <line x1="250" y1="296" x2="323" y2="296" stroke="#44515F" stroke-width="1.8" marker-end="url(#ca)"/>
+      <text x="286" y="279" text-anchor="middle" font-size="7.5" fill="#44515F" font-family="Roboto,sans-serif">tool_call</text>
+      <text x="286" y="311" text-anchor="middle" font-size="7.5" fill="#44515F" font-family="Roboto,sans-serif">results</text>
+
+      <!-- Bidirectional: LLM ↔ RAG (dashed — conditional) -->
+      <line x1="557" y1="284" x2="630" y2="284" stroke="#888" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#cg)"/>
+      <line x1="630" y1="296" x2="557" y2="296" stroke="#888" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#cg)"/>
+      <text x="593" y="279" text-anchor="middle" font-size="7.5" fill="#666" font-family="Roboto,sans-serif">query</text>
+      <text x="593" y="311" text-anchor="middle" font-size="7.5" fill="#666" font-family="Roboto,sans-serif">context</text>
+
+      <!-- ── DATA LAYER ── -->
+
+      <!-- Excel File Store (under MCP) -->
+      <rect x="16" y="384" width="234" height="62" rx="6" fill="white" stroke="#7AB890" stroke-width="1.5" filter="url(#cs)"/>
+      <text x="133" y="411" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2A5A3A" font-family="Roboto,sans-serif">Excel File Store</text>
+      <text x="133" y="426" text-anchor="middle" font-size="9" fill="#667788" font-family="Roboto,sans-serif">.xlsx · OpenPyXL · Pandas</text>
+
+      <!-- Supabase / PostgreSQL (under FastAPI SQL route) -->
+      <rect x="260" y="384" width="360" height="62" rx="6" fill="white" stroke="#7AB890" stroke-width="1.5" filter="url(#cs)"/>
+      <text x="440" y="411" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2A5A3A" font-family="Roboto,sans-serif">Supabase · PostgreSQL</text>
+      <text x="440" y="426" text-anchor="middle" font-size="9" fill="#667788" font-family="Roboto,sans-serif">Auth · Sessions · Metadata · File References</text>
+
+      <!-- FAISS Vector Index (under RAG) -->
+      <rect x="630" y="384" width="234" height="62" rx="6" fill="white" stroke="#7AB890" stroke-width="1.5" filter="url(#cs)"/>
+      <text x="747" y="411" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2A5A3A" font-family="Roboto,sans-serif">FAISS Vector Index</text>
+      <text x="747" y="426" text-anchor="middle" font-size="9" fill="#667788" font-family="Roboto,sans-serif">Embeddings · ANN Search</text>
+
+      <!-- MCP → Excel (read/write .xlsx) -->
+      <line x1="133" y1="342" x2="133" y2="384" stroke="#3D6FA8" stroke-width="1.5" marker-end="url(#cb)"/>
+      <text x="142" y="367" font-size="7.5" fill="#3D6FA8" font-family="Roboto,sans-serif">read/write</text>
+
+      <!-- RAG → FAISS (vector query) -->
+      <line x1="747" y1="342" x2="747" y2="384" stroke="#3D6FA8" stroke-width="1.5" marker-end="url(#cb)"/>
+      <text x="756" y="367" font-size="7.5" fill="#3D6FA8" font-family="Roboto,sans-serif">vector query</text>
+
+      <!-- ── LEGEND ── -->
+      <rect x="8" y="466" width="864" height="18" rx="4" fill="none" stroke="#CCC" stroke-width="0.8"/>
+      <line x1="18" y1="475" x2="44" y2="475" stroke="#44515F" stroke-width="1.5" marker-end="url(#ca)"/>
+      <text x="50" y="479" font-size="7.5" fill="#44515F" font-family="Roboto,sans-serif">Frequent / Sync</text>
+      <line x1="162" y1="475" x2="188" y2="475" stroke="#888" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#cg)"/>
+      <text x="194" y="479" font-size="7.5" fill="#666" font-family="Roboto,sans-serif">Conditional / Async</text>
+      <line x1="320" y1="475" x2="346" y2="475" stroke="#3D6FA8" stroke-width="1.5" marker-end="url(#cb)"/>
+      <text x="352" y="479" font-size="7.5" fill="#3D6FA8" font-family="Roboto,sans-serif">Data Connection</text>
+      <rect x="458" y="469" width="12" height="12" rx="2" fill="none" stroke="#B09040" stroke-width="2.5"/>
+      <text x="476" y="479" font-size="7.5" fill="#8A6A10" font-family="Roboto,sans-serif">Orchestration Hub</text>
+      <rect x="586" y="469" width="12" height="12" rx="2" fill="none" stroke="#AAAAAA" stroke-width="1.5" stroke-dasharray="4,2"/>
+      <text x="604" y="479" font-size="7.5" fill="#666" font-family="Roboto,sans-serif">On-Demand Service</text>
+
+    </svg>
+  </div>
+
+  <!-- KEY METRICS — right-column pair for CHALLENGES -->
+  <div class="section" style="display:flex;flex-direction:column;justify-content:space-between;">
+    <h2>Key Metrics</h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1;margin-top:4px;">
+      <div style="background:linear-gradient(135deg,#0a3d1f,#107c41);border-radius:8px;padding:14px 10px;text-align:center;color:#fff;">
+        <div style="font-size:34px;font-weight:900;line-height:1;letter-spacing:-1px;">91</div>
+        <div style="font-size:11px;font-weight:700;margin-top:5px;opacity:.9;letter-spacing:.3px;">MCP TOOLS</div>
+        <div style="font-size:10px;opacity:.75;margin-top:2px;">incl. Auto-Dashboard</div>
+      </div>
+      <div style="background:linear-gradient(135deg,#1a5c2e,#2e9c5c);border-radius:8px;padding:14px 10px;text-align:center;color:#fff;">
+        <div style="font-size:34px;font-weight:900;line-height:1;letter-spacing:-1px;">106<span style="font-size:20px;">+</span></div>
+        <div style="font-size:11px;font-weight:700;margin-top:5px;opacity:.9;letter-spacing:.3px;">FORMULAS</div>
+        <div style="font-size:10px;opacity:.75;margin-top:2px;">Excel Functions</div>
+      </div>
+      <div style="background:linear-gradient(135deg,#bf360c,#e65100);border-radius:8px;padding:14px 10px;text-align:center;color:#fff;">
+        <div style="font-size:34px;font-weight:900;line-height:1;letter-spacing:-1px;">92<span style="font-size:20px;">%</span></div>
+        <div style="font-size:11px;font-weight:700;margin-top:5px;opacity:.9;letter-spacing:.3px;">SUCCESS RATE</div>
+        <div style="font-size:10px;opacity:.75;margin-top:2px;">Over 250 Tests</div>
+      </div>
+      <div style="background:linear-gradient(135deg,#0d47a1,#1565c0);border-radius:8px;padding:14px 10px;text-align:center;color:#fff;">
+        <div style="font-size:34px;font-weight:900;line-height:1;letter-spacing:-1px;">&lt;5<span style="font-size:20px;">s</span></div>
+        <div style="font-size:11px;font-weight:700;margin-top:5px;opacity:.9;letter-spacing:.3px;">AVG RESPONSE</div>
+        <div style="font-size:10px;opacity:.75;margin-top:2px;">AI Latency</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHALLENGES -->
+  <div class="section">
+    <h2>Challenges</h2>
+    <ul>
+      <li>Translating <strong>ambiguous natural language</strong> into precise Excel operations.</li>
+      <li>Managing <strong>multi-sheet context</strong> across large workbooks accurately.</li>
+      <li>Building a <strong>reliable 91-tool pipeline</strong> — including an auto-dashboard generator — that handles edge cases gracefully.</li>
+      <li>Generating correct formulas for <strong>106+ Excel functions</strong> on demand.</li>
+      <li>Ensuring <strong>RAG retrieval accuracy</strong> across diverse spreadsheet schemas.</li>
+      <li>Achieving low-latency AI responses within the <strong>30-second timeout</strong>.</li>
+    </ul>
+  </div>
+
+  <!-- TIMELINE -->
+  <div class="section full">
+    <h2>Project Timeline</h2>
+    <div class="timeline">
+      <div class="titem">
+        <div class="tdot"></div>
+        <div class="tlabel">Problem<br/>Definition</div>
+        <div class="tdate">Sep 2024</div>
+      </div>
+      <div class="titem">
+        <div class="tdot"></div>
+        <div class="tlabel">Literature<br/>Survey</div>
+        <div class="tdate">Oct 2024</div>
+      </div>
+      <div class="titem">
+        <div class="tdot"></div>
+        <div class="tlabel">Architecture<br/>Design</div>
+        <div class="tdate">Nov 2024</div>
+      </div>
+      <div class="titem">
+        <div class="tdot"></div>
+        <div class="tlabel">Backend &amp;<br/>AI Engine</div>
+        <div class="tdate">Dec–Jan 2025</div>
+      </div>
+      <div class="titem">
+        <div class="tdot"></div>
+        <div class="tlabel">RAG &amp;<br/>Tool Pipeline</div>
+        <div class="tdate">Feb 2025</div>
+      </div>
+      <div class="titem">
+        <div class="tdot"></div>
+        <div class="tlabel">Frontend<br/>Integration</div>
+        <div class="tdate">Mar 2025</div>
+      </div>
+      <div class="titem">
+        <div class="tdot"></div>
+        <div class="tlabel">Testing &amp;<br/>Evaluation</div>
+        <div class="tdate">Apr 2025</div>
+      </div>
+      <div class="titem">
+        <div class="tdot" style="background:#ffd700;border-color:#ffd700;box-shadow:0 0 0 2px #ffd700;"></div>
+        <div class="tlabel">Final<br/>Presentation</div>
+        <div class="tdate">May 2025</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OUR CONTRIBUTION -->
+  <div class="section">
+    <h2>Our Contribution</h2>
+    <div class="contrib-grid">
+      <div class="contrib-card">
+        <div class="ct">91-Tool MCP Pipeline</div>
+        <p>Built a complete tool suite covering read, write, sort, filter, charts, pivot tables, forecasting &amp; more.</p>
+      </div>
+      <div class="contrib-card">
+        <div class="ct">RAG Engine</div>
+        <p>Excel-aware Retrieval-Augmented Generation for accurate Q&amp;A over any uploaded spreadsheet.</p>
+      </div>
+      <div class="contrib-card">
+        <div class="ct">Voice-to-Command</div>
+        <p>Integrated Web Speech API so users can dictate Excel commands hands-free.</p>
+      </div>
+      <div class="contrib-card">
+        <div class="ct">106+ Formula Engine</div>
+        <p>Native support for SUM, VLOOKUP, IF, COUNTIF, INDEX/MATCH and complex nested formulas.</p>
+      </div>
+      <div class="contrib-card">
+        <div class="ct">Session Memory</div>
+        <p>Full chat history with session-level context, resumable sessions and file versioning.</p>
+      </div>
+      <div class="contrib-card">
+        <div class="ct">Real-time Spreadsheet</div>
+        <p>FortuneSheet-powered live grid that reflects AI operations instantly with diff highlighting.</p>
+      </div>
+      <div class="contrib-card" style="border-left:3px solid #107c41;background:linear-gradient(135deg,#f0f7f2,#ffffff);">
+        <div class="ct" style="color:#0a3d1f;">Auto-Dashboard Generator</div>
+        <p>Tool #91 — analyzes any sheet, detects column types, computes KPIs, picks chart types, and assembles a fully styled dashboard in one command.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="section">
+    <h2>Results &amp; Evaluation</h2>
+    <table>
+      <tr>
+        <th>Task Category</th>
+        <th>Commands Tested</th>
+        <th>Success Rate</th>
+        <th>Avg. Latency</th>
+      </tr>
+      <tr>
+        <td>Read / Query</td>
+        <td>50</td>
+        <td class="best">96%</td>
+        <td>1.2s</td>
+      </tr>
+      <tr>
+        <td>Write / Edit Cells</td>
+        <td>60</td>
+        <td class="best">94%</td>
+        <td>1.8s</td>
+      </tr>
+      <tr>
+        <td>Formulas</td>
+        <td>45</td>
+        <td class="best">91%</td>
+        <td>2.1s</td>
+      </tr>
+      <tr>
+        <td>Charts &amp; Visuals</td>
+        <td>30</td>
+        <td class="best">93%</td>
+        <td>2.4s</td>
+      </tr>
+      <tr>
+        <td>RAG Q&amp;A</td>
+        <td>40</td>
+        <td class="best">89%</td>
+        <td>3.0s</td>
+      </tr>
+      <tr>
+        <td>Complex Multi-step</td>
+        <td>25</td>
+        <td class="best">88%</td>
+        <td>5.2s</td>
+      </tr>
+    </table>
+    <div class="hbox">Overall Command Success Rate: <strong>92.3%</strong> across 250 test cases</div>
+  </div>
+
+  <!-- APPLICATIONS -->
+  <div class="section">
+    <h2>Applications</h2>
+    <ul>
+      <li><strong>Finance Teams:</strong> Automate monthly reports, budget analysis, and variance calculations.</li>
+      <li><strong>HR Departments:</strong> Manage employee data, compute payroll summaries, and filter records.</li>
+      <li><strong>Sales &amp; Marketing:</strong> Analyze sales trends, generate forecasts, and build dashboards.</li>
+      <li><strong>Education:</strong> Grade sheet management, student performance analysis.</li>
+      <li><strong>Research:</strong> Data cleaning, statistical analysis, and chart generation.</li>
+      <li><strong>SMEs:</strong> Any non-technical user who works with Excel daily.</li>
+    </ul>
+  </div>
+
+  <!-- TOOLS USED -->
+  <div class="section">
+    <h2>Tools &amp; Technologies</h2>
+    <div class="tools-grid">
+      <div class="tool-badge"><img src="https://cdn.simpleicons.org/python/3776AB" alt=""/>Python 3.11</div>
+      <div class="tool-badge"><img src="https://cdn.simpleicons.org/fastapi/009688" alt=""/>FastAPI</div>
+      <div class="tool-badge"><img src="https://cdn.simpleicons.org/react/087EA4" alt=""/>React 18</div>
+      <div class="tool-badge"><img src="https://cdn.simpleicons.org/typescript/3178C6" alt=""/>TypeScript</div>
+      <div class="tool-badge"><span class="tool-icon" style="background:#bf360c;">AI</span>LLM AI Engine</div>
+      <div class="tool-badge"><img src="https://cdn.simpleicons.org/supabase/1A7A4A" alt=""/>Supabase</div>
+      <div class="tool-badge"><img src="https://cdn.simpleicons.org/microsoftexcel/217346" alt=""/>FortuneSheet</div>
+      <div class="tool-badge"><span class="tool-icon" style="background:#0057b8;">F</span>FAISS</div>
+      <div class="tool-badge"><img src="https://cdn.simpleicons.org/huggingface/E38A1A" alt=""/>Sentence-BERT</div>
+      <div class="tool-badge"><img src="https://cdn.simpleicons.org/pandas/150458" alt=""/>Pandas</div>
+      <div class="tool-badge"><img src="https://cdn.simpleicons.org/microsoftexcel/217346" alt=""/>OpenPyXL</div>
+      <div class="tool-badge"><img src="https://cdn.simpleicons.org/tailwindcss/0694B8" alt=""/>Tailwind CSS</div>
+      <div class="tool-badge"><img src="https://cdn.simpleicons.org/vite/646CFF" alt=""/>Vite</div>
+      <div class="tool-badge"><img src="https://cdn.simpleicons.org/postgresql/4169E1" alt=""/>PostgreSQL</div>
+      <div class="tool-badge"><span class="tool-icon" style="background:#1565c0;">W</span>Web Speech API</div>
+      <div class="tool-badge"><img src="https://cdn.simpleicons.org/sqlalchemy/D71F00" alt=""/>SQLAlchemy</div>
+      <div class="tool-badge"><span class="tool-icon" style="background:#433e38;">Z</span>Zustand</div>
+    </div>
+  </div>
+
+  <!-- KEY FEATURES PILLS -->
+  <div class="section full">
+    <h2>Key Features at a Glance</h2>
+    <div style="margin-top:5px;line-height:2;">
+      <span class="pill">Natural Language Commands</span>
+      <span class="pill">91 Excel Tools</span>
+      <span class="pill">106+ Formula Support</span>
+      <span class="pill orange">AI-Powered Engine</span>
+      <span class="pill">RAG Document Q&amp;A</span>
+      <span class="pill blue">Voice-to-Text Input</span>
+      <span class="pill">Live Spreadsheet Grid</span>
+      <span class="pill">Session History</span>
+      <span class="pill orange">Multi-Sheet Support</span>
+      <span class="pill">Chart Generation</span>
+      <span class="pill">Pivot Tables</span>
+      <span class="pill blue">Forecast &amp; Trendline</span>
+      <span class="pill">Conditional Formatting</span>
+      <span class="pill">Bulk Data Operations</span>
+      <span class="pill orange">File Upload &amp; Download</span>
+      <span class="pill">VLOOKUP / INDEX-MATCH</span>
+    </div>
+  </div>
+
+</div><!-- end body grid -->
+
+<!-- ══════════════════ FOOTER ══════════════════ -->
+<div class="footer">
+  <div class="footer-logo">
+    <img src="data:image/png;base64,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" style="width:60px;height:60px;border-radius:50%;border:2px solid #ffd700;object-fit:cover;"/>
+    <div class="footer-uni">
+      National University of Computer<br/>
+      and Emerging Sciences, FAST<br/>
+      <span style="font-size:7px;opacity:.8;font-weight:400;">Department of Computer Science</span>
+    </div>
+  </div>
+  <div class="divider-v"></div>
+  <div class="footer-people">
+    <div class="lbl">Supervised by</div>
+    <strong>Zulfiqar Ali Memon</strong>
+    <br/><br/>
+    <div class="lbl">Group Members</div>
+    <strong>Muhammad Mustafa Shahzad</strong> &nbsp;22k-4166<br/>
+    <strong>Nawfal Hussain</strong> &nbsp;22k-4372<br/>
+    <strong>Muhammad Alyan</strong> &nbsp;22k-4582
+  </div>
+</div>
+
+</body>
+</html>
